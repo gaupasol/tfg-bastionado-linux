@@ -1,0 +1,33 @@
+---
+- name: Run OpenSCAP Security Scan (CIS L1 Workstation) on Rocky Linux 9
+  hosts: all
+  become: yes
+  tasks:
+    - name: Install OpenSCAP scanner and security guides
+      ansible.builtin.package:
+        name: 
+          - openscap-scanner
+          - scap-security-guide
+        state: present
+
+    - name: Ensure reports directory exists
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: directory
+        mode: '0755'
+
+    - name: Run OpenSCAP evaluation (CIS Level 1 Workstation for Rocky 9)
+      ansible.builtin.command: >
+        oscap xccdf eval 
+        --profile xccdf_org.ssgproject.content_profile_cis_1_workstation 
+        --results /tmp/openscap_reports/results.xml 
+        --report /tmp/openscap_reports/report.html 
+        /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
+      register: oscap_scan
+      # oscap returns exit code 2 if vulnerabilities are found. 
+      # We don't want the Ansible playbook to report as "Failed" just because the machine isn't perfectly secure.
+      failed_when: oscap_scan.rc not in [0, 2] 
+
+    - name: Fetch the HTML report notification
+      ansible.builtin.debug:
+        msg: "Scan complete. The report is saved on the target machine at /tmp/openscap_reports/report.html"
