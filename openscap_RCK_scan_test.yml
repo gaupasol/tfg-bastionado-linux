@@ -30,4 +30,4 @@
 
     - name: Fetch the HTML report notification
       ansible.builtin.debug:
-        msg: "Scan complete. The report is saved on the target machine at /tmp/openscap_reports/report.html"
+        msg: "Escaneo completado. Se ha dejado en la maquina escaneada en /tmp/openscap_reports/report.html"
