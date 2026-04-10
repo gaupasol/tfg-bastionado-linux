@@ -1,8 +1,8 @@
 ---
 - name: Run OpenSCAP Security Scan (CIS L1 Workstation) on Rocky Linux 9
-  hosts: "all:!SLKVAWXTFGDES" #Todos menos el host de AWX
+  hosts: "all:!SLKVAWXTFGDES" # Targets everything except the AWX host
   become: yes
-  gather_facts: yes  # Crucial for the dynamic naming to work
+  gather_facts: yes
 
   tasks:
     - name: Install OpenSCAP scanner and security guides
@@ -26,7 +26,7 @@
         --report /tmp/openscap_reports/report.html 
         /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
       register: oscap_scan
-      # oscap returns exit code 2 if vulnerabilities are found. 
+      # oscap returns exit code 2 if vulnerabilities are found
       failed_when: oscap_scan.rc not in [0, 2] 
 
     - name: Notify scan completion
@@ -35,11 +35,15 @@
 
     - name: Retrieve, Rename, and Store OpenSCAP Reports
       block:
-        - name: 1. Construct the dynamic report filename
+        - name: 1a. Define base facts for naming
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_ip: "{{ ansible_default_ipv4.address | default(inventory_hostname) }}"
             benchmark: "cis_server_l1"
+
+        - name: 1b. Construct the final dynamic filename
+          ansible.builtin.set_fact:
+            # Combining the facts defined in the previous step
             file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_ip }}"
 
         - name: 2. Fetch XML report from scanned target to AWX container
@@ -60,7 +64,7 @@
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
-          become: yes # Ensures root can create the directory if ibai can't
+          become: yes
 
         - name: 5. Push reports from AWX container to the AWX Host
           ansible.builtin.copy:
