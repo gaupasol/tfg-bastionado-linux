@@ -2,6 +2,8 @@
 - name: Run OpenSCAP Security Scan (CIS L1 Workstation) on Rocky Linux 9
   hosts: all
   become: yes
+  gather_facts: yes  # Crucial for the dynamic naming to work
+
   tasks:
     - name: Install OpenSCAP scanner and security guides
       ansible.builtin.package:
@@ -10,7 +12,7 @@
           - scap-security-guide
         state: present
 
-    - name: Ensure reports directory exists
+    - name: Ensure temporary reports directory exists on target
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: directory
@@ -25,9 +27,51 @@
         /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
       register: oscap_scan
       # oscap returns exit code 2 if vulnerabilities are found. 
-      # We don't want the Ansible playbook to report as "Failed" just because the machine isn't perfectly secure.
       failed_when: oscap_scan.rc not in [0, 2] 
 
-    - name: Fetch the HTML report notification
+    - name: Notify scan completion
       ansible.builtin.debug:
-        msg: "Escaneo completado. Se ha dejado en la maquina escaneada en /tmp/openscap_reports/report.html"
+        msg: "Escaneo completado en {{ inventory_hostname }}. Procesando reporte..."
+
+    - name: Retrieve, Rename, and Store OpenSCAP Reports
+      block:
+        - name: 1. Construct the dynamic report filename
+          ansible.builtin.set_fact:
+            os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
+            target_ip: "{{ ansible_default_ipv4.address | default(inventory_hostname) }}"
+            benchmark: "cis_server_l1"
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_ip }}"
+
+        - name: 2. Fetch XML report from scanned target to AWX container
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/results.xml
+            dest: "/tmp/{{ file_base }}.xml"
+            flat: yes
+
+        - name: 3. Fetch HTML report from scanned target to AWX container
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/report.html
+            dest: "/tmp/{{ file_base }}.html"
+            flat: yes
+
+        - name: 4. Ensure the destination directory exists on the AWX Host
+          ansible.builtin.file:
+            path: /home/awx-poc-tfg/reportes
+            state: directory
+            mode: '0755'
+          delegate_to: SLKVAWXTFGDES
+          become: yes # Ensures root can create the directory if ibai can't
+
+        - name: 5. Push reports from AWX container to the AWX Host
+          ansible.builtin.copy:
+            src: "/tmp/{{ file_base }}.{{ item }}"
+            dest: "/home/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
+          delegate_to: SLKVAWXTFGDES
+          loop:
+            - xml
+            - html
+
+    - name: Cleanup temporary files on target
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: absent
