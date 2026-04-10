@@ -1,6 +1,6 @@
 ---
 - name: Run OpenSCAP Security Scan (CIS L1 Workstation) on Rocky Linux 9
-  hosts: all
+  hosts: "all:!SLKVAWXTFGDES" #Todos menos el host de AWX
   become: yes
   gather_facts: yes  # Crucial for the dynamic naming to work
 
