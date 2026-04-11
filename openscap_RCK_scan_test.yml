@@ -60,7 +60,7 @@
 
         - name: 4. Ensure the destination directory exists on the AWX Host
           ansible.builtin.file:
-            path: /home/awx-poc-tfg/reportes
+            path: /home/ibai/awx-poc-tfg/reportes
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
@@ -69,7 +69,7 @@
         - name: 5. Push reports from AWX container to the AWX Host
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "/home/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
+            dest: "/home/ibai/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
