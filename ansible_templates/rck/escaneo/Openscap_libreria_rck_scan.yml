@@ -23,9 +23,9 @@
       ansible.builtin.command: >
         oscap xccdf eval 
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
-        --cpe /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
-        --results /tmp/openscap_reports/results.xml 
-        --report /tmp/openscap_reports/report.html 
+        --cpe /usr/share/openscap/cpe/openscap-cpe-dict.xml
+        --results /tmp/openscap_reports/results.xml
+        --report /tmp/openscap_reports/report.html
         /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
       register: oscap_scan
       # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades.
