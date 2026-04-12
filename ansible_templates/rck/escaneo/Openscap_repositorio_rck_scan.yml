@@ -63,7 +63,7 @@
         - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
             # Combinando las variables definidas en el paso anterior
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
         - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
           ansible.builtin.fetch:

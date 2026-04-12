@@ -17,38 +17,36 @@
         state: directory
         mode: '0755'
 
-    # --- FIX START ---
-    - name: Respaldar el archivo os-release original
+    # --- INICIO DEL PARCHEO DEL DATASTREAM ---
+    - name: Crear una copia de trabajo del datastream de RHEL 9
       ansible.builtin.copy:
-        src: /etc/os-release
-        dest: /etc/os-release.bak
+        src: /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+        dest: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
         remote_src: yes
 
-    - name: Disfrazar temporalmente Rocky Linux como RHEL para saltar la validación CPE
+    - name: Parchear verificación RPM (Cambiar redhat-release por rocky-release)
       ansible.builtin.replace:
-        path: /etc/os-release
-        regexp: '^ID="rocky"'
-        replace: 'ID="rhel"'
-    # --- FIX END ---
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'redhat-release'
+        replace: 'rocky-release'
 
-    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1 para RHEL 9)
+    - name: Parchear verificación CPE (Cambiar XCCDF para aceptar el entorno Rocky)
+      ansible.builtin.replace:
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'cpe:/o:redhat:enterprise_linux'
+        replace: 'cpe:/o:rocky:rocky'
+    # --- FIN DEL PARCHEO DEL DATASTREAM ---
+
+    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1) con el XML parcheado
       ansible.builtin.command: >
         oscap xccdf eval
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
-        /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+        /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
       register: oscap_scan
       # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
       failed_when: oscap_scan.rc not in [0, 2]
-
-    # --- RESTORE START ---
-    - name: Restaurar el archivo os-release original
-      ansible.builtin.copy:
-        src: /etc/os-release.bak
-        dest: /etc/os-release
-        remote_src: yes
-    # --- RESTORE END ---
 
     - name: Notificar finalización del escaneo
       block:
@@ -60,7 +58,7 @@
 
         - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}-{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
         - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
           ansible.builtin.fetch:
@@ -91,12 +89,7 @@
             - xml
             - html
 
-    - name: Limpiar archivos temporales en el objetivo
+    - name: Limpiar archivos temporales y XML modificado en el objetivo
       ansible.builtin.file:
         path: /tmp/openscap_reports
-        state: absent
-
-    - name: Limpiar el respaldo de os-release
-      ansible.builtin.file:
-        path: /etc/os-release.bak
         state: absent
