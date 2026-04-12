@@ -5,12 +5,13 @@
   gather_facts: yes
 
   tasks:
-    - name: Instalar el escáner OpenSCAP y las guías de seguridad
-      ansible.builtin.package:
+    - name: Asegurar que el escáner OpenSCAP y las guías (v0.1.80+) estén instalados
+      ansible.builtin.dnf:
         name: 
           - openscap-scanner
-          - scap-security-guide
+          - scap-security-guide >= 0.1.80
         state: present
+      # Especificamos >= 0.1.80 para asegurar la compatibilidad con el nuevo esquema de archivos.
 
     - name: Asegurar que el directorio temporal de reportes exista en el objetivo
       ansible.builtin.file:
@@ -18,15 +19,15 @@
         state: directory
         mode: '0755'
 
-    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1 para Rocky 9)
+    - name: Ejecutar evaluación OpenSCAP (Usando el datastream estándar de RHEL 9)
       ansible.builtin.command: >
         oscap xccdf eval 
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
         --results /tmp/openscap_reports/results.xml 
         --report /tmp/openscap_reports/report.html 
-        /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
+        /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
       register: oscap_scan
-      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
+      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades.
       failed_when: oscap_scan.rc not in [0, 2] 
 
     - name: Notificar finalización del escaneo
@@ -38,13 +39,11 @@
         - name: 1a. Definir variables base para la nomenclatura
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
-            # Usamos inventory_hostname para identificar la máquina por su nombre
             target_name: "{{ inventory_hostname }}"
             benchmark: "cis_server_l1"
 
         - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
-            # Combinando las variables definidas en el paso anterior
             file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
         - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
