@@ -23,7 +23,7 @@
       ansible.builtin.command: >
         oscap xccdf eval 
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
-        --cpe /usr/share/xml/scap/ssg/content/ssg-rhel9-cpe-dictionary.xml
+        --cpe /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
         --results /tmp/openscap_reports/results.xml 
         --report /tmp/openscap_reports/report.html 
         /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
