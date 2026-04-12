@@ -1,24 +1,24 @@
 ---
-- name: Run OpenSCAP Security Scan (CIS L1 Workstation) on Rocky Linux 9
-  hosts: "all:!SLKVAWXTFGDES" # Targets everything except the AWX host
+- name: Ejecutar escaneo de seguridad OpenSCAP (Servidor CIS L1) en Rocky Linux 9
+  hosts: "all:!SLKVAWXTFGDES" # Apunta a todas las máquinas excepto al host de AWX
   become: yes
   gather_facts: yes
 
   tasks:
-    - name: Install OpenSCAP scanner and security guides
+    - name: Instalar el escáner OpenSCAP y las guías de seguridad
       ansible.builtin.package:
         name: 
           - openscap-scanner
           - scap-security-guide
         state: present
 
-    - name: Ensure temporary reports directory exists on target
+    - name: Asegurar que el directorio temporal de reportes exista en el objetivo
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: directory
         mode: '0755'
 
-    - name: Run OpenSCAP evaluation (CIS Level 1 Server for Rocky 9)
+    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1 para Rocky 9)
       ansible.builtin.command: >
         oscap xccdf eval 
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
@@ -26,39 +26,40 @@
         --report /tmp/openscap_reports/report.html 
         /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
       register: oscap_scan
-      # oscap returns exit code 2 if vulnerabilities are found
+      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
       failed_when: oscap_scan.rc not in [0, 2] 
 
-    - name: Notify scan completion
+    - name: Notificar finalización del escaneo
       ansible.builtin.debug:
         msg: "Escaneo completado en {{ inventory_hostname }}. Procesando reporte..."
 
-    - name: Retrieve, Rename, and Store OpenSCAP Reports
+    - name: Recuperar, renombrar y almacenar reportes de OpenSCAP
       block:
-        - name: 1a. Define base facts for naming
+        - name: 1a. Definir variables base para la nomenclatura
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
-            target_ip: "{{ ansible_default_ipv4.address | default(inventory_hostname) }}"
+            # Usamos inventory_hostname para identificar la máquina por su nombre
+            target_name: "{{ inventory_hostname }}"
             benchmark: "cis_server_l1"
 
-        - name: 1b. Construct the final dynamic filename
+        - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
-            # Combining the facts defined in the previous step
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_ip }}"
+            # Combinando las variables definidas en el paso anterior
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
-        - name: 2. Fetch XML report from scanned target to AWX container
+        - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
           ansible.builtin.fetch:
             src: /tmp/openscap_reports/results.xml
             dest: "/tmp/{{ file_base }}.xml"
             flat: yes
 
-        - name: 3. Fetch HTML report from scanned target to AWX container
+        - name: 3. Obtener reporte HTML del objetivo escaneado al contenedor AWX
           ansible.builtin.fetch:
             src: /tmp/openscap_reports/report.html
             dest: "/tmp/{{ file_base }}.html"
             flat: yes
 
-        - name: 4. Ensure the destination directory exists on the AWX Host
+        - name: 4. Asegurar que el directorio de destino exista en el Host AWX
           ansible.builtin.file:
             path: /home/ibai/awx-poc-tfg/reportes
             state: directory
@@ -66,7 +67,7 @@
           delegate_to: SLKVAWXTFGDES
           become: yes
 
-        - name: 5. Push reports from AWX container to the AWX Host
+        - name: 5. Mover los reportes del contenedor AWX al Host AWX
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
             dest: "/home/ibai/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
@@ -75,7 +76,7 @@
             - xml
             - html
 
-    - name: Cleanup temporary files on target
+    - name: Limpiar archivos temporales en el objetivo
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: absent

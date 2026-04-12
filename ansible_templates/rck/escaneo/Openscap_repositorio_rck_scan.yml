@@ -1,0 +1,103 @@
+---
+- name: Ejecutar escaneo de seguridad OpenSCAP (CIS L1 Workstation) en Rocky Linux 9
+  hosts: "all:!SLKVAWXTFGDES" # Apunta a todas las máquinas excepto al host de AWX
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Instalar el escáner OpenSCAP
+      ansible.builtin.package:
+        name: openscap-scanner
+        state: present
+        # Se ha eliminado scap-security-guide ya que obtenemos el XML desde GitHub
+
+    - name: Asegurar que los directorios temporales de reportes y contenido existan en el objetivo
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/openscap_reports
+        - /tmp/openscap_content
+
+    - name: Clonar el repositorio fuente de OpenSCAP (en el contenedor AWX)
+      ansible.builtin.git:
+        repo: 'https://github.com/gaupasol/tfg-bastionado-linux.git'
+        dest: /tmp/tfg-bastionado-linux-local
+        depth: 1
+        force: yes
+      delegate_to: localhost
+      run_once: true
+      become: no
+
+    - name: Enviar el archivo XML de SCAP a la máquina objetivo
+      ansible.builtin.copy:
+        src: /tmp/tfg-bastionado-linux-local/resources/scans/openSCAP/ssg-rl9-ds.xml
+        dest: /tmp/openscap_content/ssg-rl9-ds.xml
+        mode: '0644'
+
+    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1 para Rocky 9)
+      ansible.builtin.command: >
+        oscap xccdf eval 
+        --profile xccdf_org.ssgproject.content_profile_cis_server_l1
+        --results /tmp/openscap_reports/results.xml 
+        --report /tmp/openscap_reports/report.html 
+        /tmp/openscap_content/ssg-rl9-ds.xml
+      register: oscap_scan
+      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
+      failed_when: oscap_scan.rc not in [0, 2] 
+
+    - name: Notificar finalización del escaneo
+      ansible.builtin.debug:
+        msg: "Escaneo completado en {{ inventory_hostname }}. Procesando los reportes..."
+
+    - name: Recuperar, renombrar y almacenar reportes de OpenSCAP
+      block:
+        - name: 1a. Definir variables base para la nomenclatura
+          ansible.builtin.set_fact:
+            os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
+            # Usamos inventory_hostname para identificar la máquina por su nombre
+            target_name: "{{ inventory_hostname }}"
+            benchmark: "cis_server_l1"
+
+        - name: 1b. Construir el nombre de archivo dinámico final
+          ansible.builtin.set_fact:
+            # Combinando las variables definidas en el paso anterior
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+
+        - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/results.xml
+            dest: "/tmp/{{ file_base }}.xml"
+            flat: yes
+
+        - name: 3. Obtener reporte HTML del objetivo escaneado al contenedor AWX
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/report.html
+            dest: "/tmp/{{ file_base }}.html"
+            flat: yes
+
+        - name: 4. Asegurar que el directorio de destino exista en el Host AWX
+          ansible.builtin.file:
+            path: /home/ibai/awx-poc-tfg/reportes
+            state: directory
+            mode: '0755'
+          delegate_to: SLKVAWXTFGDES
+          become: yes
+
+        - name: 5. Mover los reportes del contenedor AWX al Host AWX
+          ansible.builtin.copy:
+            src: "/tmp/{{ file_base }}.{{ item }}"
+            dest: "/home/ibai/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
+          delegate_to: SLKVAWXTFGDES
+          loop:
+            - xml
+            - html
+
+    - name: Limpiar archivos temporales en el objetivo
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/openscap_reports
+        - /tmp/openscap_content
