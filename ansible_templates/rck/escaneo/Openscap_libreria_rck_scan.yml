@@ -22,17 +22,28 @@
 
     # -----------------------------------------------------------------------
     # BLOQUE CPE OVERRIDE
-    # Desde scap-security-guide 0.1.74+, ssg-rl9-ds.xml puede no estar presente.
-    # El datastream ssg-rhel9-ds.xml comprueba la CPE cpe:/o:redhat:enterprise_linux:9
-    # mediante un fichero OVAL que valida que ID="rhel" en /etc/os-release.
-    # Rocky Linux tiene ID="rocky", por lo que todos los resultados salen como
-    # "notapplicable". La solución es parchear el OVAL de CPE para que también
-    # acepte "rocky" como valor válido y pasarlo con --cpe.
+    # En scap-security-guide 0.1.74+, ssg-rl9-ds.xml y ssg-rhel9-cpe-oval.xml
+    # ya NO se instalan como ficheros sueltos en disco. El CPE OVAL está embebido
+    # dentro del datastream ssg-rhel9-ds.xml.
+    # Solución:
+    #   1. Extraer todos los componentes del datastream con "oscap ds split".
+    #   2. Parchear el CPE OVAL extraído para que también acepte ID="rocky".
+    #   3. Pasar el OVAL parcheado con --cpe al escaneo.
     # -----------------------------------------------------------------------
 
-    - name: Copiar el CPE OVAL de RHEL 9 para parcharlo localmente en el objetivo
+    - name: Extraer componentes del datastream RHEL9 (incluyendo el CPE OVAL embebido)
+      ansible.builtin.command:
+        cmd: >
+          oscap ds split
+          /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+          /tmp/openscap_reports/ds_split/
+        creates: /tmp/openscap_reports/ds_split/ssg-rhel9-cpe-oval.xml
+      # "oscap ds split" desempaqueta el datastream en ficheros individuales.
+      # El CPE OVAL resultante se llama ssg-rhel9-cpe-oval.xml en el directorio de salida.
+
+    - name: Copiar el CPE OVAL extraído para no modificar el original
       ansible.builtin.copy:
-        src: /usr/share/xml/scap/ssg/content/ssg-rhel9-cpe-oval.xml
+        src: /tmp/openscap_reports/ds_split/ssg-rhel9-cpe-oval.xml
         dest: /tmp/openscap_reports/ssg-rhel9-cpe-oval-patched.xml
         remote_src: yes
 
