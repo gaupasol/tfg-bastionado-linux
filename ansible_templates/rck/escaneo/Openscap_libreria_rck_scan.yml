@@ -5,12 +5,14 @@
   gather_facts: yes
 
   tasks:
-    - name: Instalar el escáner OpenSCAP y las guías de seguridad
-      ansible.builtin.package:
-        name: 
+    - name: Asegurar que el escáner OpenSCAP y las guías estén instalados
+      ansible.builtin.dnf:
+        name:
           - openscap-scanner
           - scap-security-guide
         state: present
+      # FIX: "scap-security-guide >= 0.1.80" no es sintaxis válida en una lista de nombres de DNF.
+      # Ansible instalará la versión más reciente disponible en los repositorios del sistema.
 
     - name: Asegurar que el directorio temporal de reportes exista en el objetivo
       ansible.builtin.file:
@@ -18,34 +20,73 @@
         state: directory
         mode: '0755'
 
-    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1 para Rocky 9)
+    # -----------------------------------------------------------------------
+    # BLOQUE CPE OVERRIDE
+    # En scap-security-guide 0.1.74+, ssg-rl9-ds.xml y ssg-rhel9-cpe-oval.xml
+    # ya NO se instalan como ficheros sueltos en disco. El CPE OVAL está embebido
+    # dentro del datastream ssg-rhel9-ds.xml.
+    # Solución:
+    #   1. Extraer todos los componentes del datastream con "oscap ds split".
+    #   2. Parchear el CPE OVAL extraído para que también acepte ID="rocky".
+    #   3. Pasar el OVAL parcheado con --cpe al escaneo.
+    # -----------------------------------------------------------------------
+
+    - name: Extraer componentes del datastream RHEL9 (incluyendo el CPE OVAL embebido)
+      ansible.builtin.command:
+        cmd: >
+          oscap ds split
+          /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+          /tmp/openscap_reports/ds_split/
+        creates: /tmp/openscap_reports/ds_split/ssg-rhel9-cpe-oval.xml
+      # "oscap ds split" desempaqueta el datastream en ficheros individuales.
+      # El CPE OVAL resultante se llama ssg-rhel9-cpe-oval.xml en el directorio de salida.
+
+    - name: Copiar el CPE OVAL extraído para no modificar el original
+      ansible.builtin.copy:
+        src: /tmp/openscap_reports/ds_split/ssg-rhel9-cpe-oval.xml
+        dest: /tmp/openscap_reports/ssg-rhel9-cpe-oval-patched.xml
+        remote_src: yes
+
+    - name: Parchear CPE OVAL — añadir Rocky Linux como OS ID válido junto a RHEL
+      ansible.builtin.command:
+        cmd: >
+          sed -i
+          's|<oval:value>rhel</oval:value>|<oval:value>rhel</oval:value><oval:value>rocky</oval:value>|g'
+          /tmp/openscap_reports/ssg-rhel9-cpe-oval-patched.xml
+      # Este sed añade <oval:value>rocky</oval:value> junto a cada <oval:value>rhel</oval:value>
+      # en las definiciones de variable OVAL, de modo que el comprobador CPE acepta
+      # Rocky Linux 9 como equivalente a RHEL 9.
+
+    - name: Ejecutar evaluación OpenSCAP con CPE override para Rocky Linux 9
       ansible.builtin.command: >
-        oscap xccdf eval 
+        oscap xccdf eval
         --profile xccdf_org.ssgproject.content_profile_cis_server_l1
-        --results /tmp/openscap_reports/results.xml 
-        --report /tmp/openscap_reports/report.html 
-        /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
+        --cpe /tmp/openscap_reports/ssg-rhel9-cpe-oval-patched.xml
+        --results /tmp/openscap_reports/results.xml
+        --report /tmp/openscap_reports/report.html
+        /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
       register: oscap_scan
-      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
-      failed_when: oscap_scan.rc not in [0, 2] 
+      # oscap devuelve código de salida 2 cuando hay reglas que fallan (comportamiento normal).
+      # Sólo fallamos el task si el código es distinto de 0 o 2.
+      failed_when: oscap_scan.rc not in [0, 2]
 
     - name: Notificar finalización del escaneo
       ansible.builtin.debug:
-        msg: "Escaneo completado en {{ inventory_hostname }}. Procesando reporte..."
+        msg: "Escaneo completado en {{ inventory_hostname }}. Código de salida: {{ oscap_scan.rc }}. Procesando reporte..."
 
     - name: Recuperar, renombrar y almacenar reportes de OpenSCAP
       block:
         - name: 1a. Definir variables base para la nomenclatura
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
-            # Usamos inventory_hostname para identificar la máquina por su nombre
             target_name: "{{ inventory_hostname }}"
             benchmark: "cis_server_l1"
 
         - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
-            # Combinando las variables definidas en el paso anterior
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}:{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            # FIX: Se reemplaza "hora:minuto" por "hora-minuto" para evitar el carácter
+            # ":" en nombres de fichero, que es inválido en muchos sistemas de archivos.
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}-{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
         - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
           ansible.builtin.fetch:
