@@ -1,7 +1,11 @@
-- name: Ejecutar escaneo de seguridad OpenSCAP (Servidor CIS L1) en Rocky Linux 9
+- name: Ejecutar escaneo de seguridad OpenSCAP en Rocky Linux 9
   hosts: "all:!SLKVAWXTFGDES"  # Apunta a todas las máquinas excepto al host de AWX
   become: yes
   gather_facts: yes
+  vars:
+    # Define la normativa aquí para que se actualice en todo el playbook automáticamente
+    oscap_profile: "xccdf_org.ssgproject.content_profile_cis_server_l1"
+    benchmark: "cis_server_l1"
 
   tasks:
     - name: Instalar el escáner OpenSCAP y las guías de seguridad
@@ -37,10 +41,10 @@
         replace: 'cpe:/o:rocky:rocky'
     # --- FIN DEL PARCHEO DEL DATASTREAM ---
 
-    - name: Ejecutar evaluación OpenSCAP (Servidor CIS Nivel 1) con el XML parcheado
+    - name: Ejecutar evaluación OpenSCAP con el XML parcheado
       ansible.builtin.command: >
         oscap xccdf eval
-        --profile xccdf_org.ssgproject.content_profile_cis_server_l1
+        --profile {{ oscap_profile }}
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
         /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
@@ -54,7 +58,6 @@
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_name: "{{ inventory_hostname }}"
-            benchmark: "cis_server_l1"
 
         - name: 1b. Construir el nombre de archivo dinámico final
           ansible.builtin.set_fact:
@@ -88,6 +91,19 @@
           loop:
             - xml
             - html
+
+    # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
+    - name: Extraer el porcentaje de cumplimiento desde el archivo guardado en el Host AWX
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ file_base }}.xml"
+      delegate_to: SLKVAWXTFGDES
+      register: openscap_score
+      changed_when: false
+      become: yes # Se asegura de tener permisos de lectura sobre los archivos traídos
+
+    - name: Mostrar el porcentaje de cumplimiento final en consola
+      ansible.builtin.debug:
+        msg: "El porcentaje de cumplimiento ({{ benchmark | replace('_', ' ') | upper }}) para {{ inventory_hostname }} es: {{ openscap_score.stdout | float | round(2) }}%"
+    # --- FIN DE EXTRACCIÓN DE PORCENTAJE ---
 
     - name: Limpiar archivos temporales y XML modificado en el objetivo
       ansible.builtin.file:
