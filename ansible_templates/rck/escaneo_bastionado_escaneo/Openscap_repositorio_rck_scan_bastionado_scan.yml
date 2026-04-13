@@ -1,0 +1,315 @@
+- name: "Evaluación y Remediación de Seguridad: OpenSCAP CIS Level 1 Server (Rocky Linux 9)"
+  hosts: "all:!SLKVAWXTFGDES"  # Apunta a todas las máquinas excepto al host de AWX
+  become: yes
+  gather_facts: yes
+  vars:
+    oscap_profile: "xccdf_org.ssgproject.content_profile_cis_server_l1"
+    benchmark: "cis_server_l1"
+    github_raw_xml_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-rhel9-ds.xml"
+    github_remediation_base_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/remediations/ssg_generated/static_profiles"
+    remediation_file: "rhel9-playbook-{{ benchmark }}.yml"
+    awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
+
+  tasks:
+    - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
+      ansible.builtin.package:
+        name: openscap-scanner
+        state: present
+
+    - name: "LOG | Informar sobre la creación del directorio temporal"
+      ansible.builtin.debug:
+        msg: "Verificando y/o creando el directorio temporal para reportes en el objetivo: /tmp/openscap_reports"
+
+    - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: directory
+        mode: '0755'
+
+    # --- INICIO DEL PARCHEO DEL DATASTREAM ---
+    - name: "LOG | Informar sobre la descarga del datastream"
+      ansible.builtin.debug:
+        msg: "Buscando y descargando el archivo XML fuente desde GitHub al nodo AWX local"
+      delegate_to: localhost
+      run_once: yes
+
+    - name: "RED | Descargar el datastream desde GitHub al nodo de control (AWX)"
+      ansible.builtin.get_url:
+        url: "{{ github_raw_xml_url }}"
+        dest: /tmp/ssg-rhel9-ds.xml
+        mode: '0644'
+      delegate_to: localhost
+      run_once: yes
+      become: no
+
+    - name: "LOG | Informar sobre la transferencia de archivos"
+      ansible.builtin.debug:
+        msg: "Transfiriendo ssg-rhel9-ds.xml hacia el objetivo {{ inventory_hostname }}"
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
+      ansible.builtin.copy:
+        src: /tmp/ssg-rhel9-ds.xml
+        dest: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+
+    - name: "PARCHEO | Modificar verificación RPM (redhat-release -> rocky-release)"
+      ansible.builtin.replace:
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'redhat-release'
+        replace: 'rocky-release'
+
+    - name: "PARCHEO | Modificar verificación CPE (redhat:enterprise_linux -> rocky:rocky)"
+      ansible.builtin.replace:
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'cpe:/o:redhat:enterprise_linux'
+        replace: 'cpe:/o:rocky:rocky'
+    # --- FIN DEL PARCHEO DEL DATASTREAM ---
+
+    - name: "LOG | Informar sobre el inicio del escaneo PRE-remediación"
+      ansible.builtin.debug:
+        msg: "Iniciando escaneo OpenSCAP (PRE) con el perfil '{{ oscap_profile }}'. Esto puede tardar unos minutos..."
+
+    - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP PRE-remediación en el objetivo"
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --profile {{ oscap_profile }}
+        --results /tmp/openscap_reports/results-pre.xml
+        --report /tmp/openscap_reports/report-pre.html
+        /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+      register: oscap_scan_pre
+      failed_when: oscap_scan_pre.rc not in [0, 2]
+
+    - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes PRE-remediación"
+      block:
+        - name: "VARIABLES | Generar nomenclatura dinámica de archivos y carpetas"
+          ansible.builtin.set_fact:
+            os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
+            target_name: "{{ inventory_hostname }}"
+            scan_type: "escaneo-bastionado-escaneo"
+            unique_id: "{{ 100000000 | random | to_uuid | split('-') | first | upper }}"
+
+        - name: "VARIABLES | Construir rutas y base de archivos (con UUID)"
+          ansible.builtin.set_fact:
+            file_base: "{{ ansible_date_time.date }}-{{ unique_id }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ ansible_date_time.date }}-{{ unique_id }}-{{ scan_type }}"
+
+        - name: "RED | Extraer reporte XML crudo PRE desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/results-pre.xml
+            dest: "/tmp/{{ file_base }}-pre.xml"
+            flat: yes
+
+        - name: "RED | Extraer reporte HTML legible PRE desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/report-pre.html
+            dest: "/tmp/{{ file_base }}-pre.html"
+            flat: yes
+
+        - name: "LOG | Informar sobre la creación de la estructura de carpetas destino"
+          ansible.builtin.debug:
+            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ report_dir }}/[xml, html, playbook_usado]"
+          delegate_to: SLKVAWXTFGDES
+
+        - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
+          ansible.builtin.file:
+            path: "{{ report_dir }}/{{ item }}"
+            state: directory
+            mode: '0755'
+          delegate_to: SLKVAWXTFGDES
+          become: yes
+          loop:
+            - xml
+            - html
+            - playbook_usado
+
+        - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes PRE en el Host AWX"
+          ansible.builtin.copy:
+            src: "/tmp/{{ file_base }}-pre.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}-pre.{{ item }}"
+          delegate_to: SLKVAWXTFGDES
+          loop:
+            - xml
+            - html
+
+    # --- INICIO DE EXTRACCIÓN DE PORCENTAJE PRE EN EL HOST ---
+    - name: "EXTRACCIÓN | Leer score de cumplimiento PRE desde el XML en el Host AWX"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}-pre.xml"
+      delegate_to: SLKVAWXTFGDES
+      register: openscap_score_pre
+      changed_when: false
+      become: yes
+    # --- FIN DE EXTRACCIÓN DE PORCENTAJE PRE ---
+
+    # --- INICIO DE REMEDIACIÓN SSG ---
+    - name: "LOG | Informar sobre la descarga del playbook de remediación"
+      ansible.builtin.debug:
+        msg: "Descargando playbook de remediación desde GitHub ({{ github_remediation_base_url }}/{{ remediation_file }})"
+      delegate_to: localhost
+      run_once: yes
+
+    - name: "RED | Descargar playbook de remediación en AWX"
+      ansible.builtin.get_url:
+        url: "{{ github_remediation_base_url }}/{{ remediation_file }}"
+        dest: "/tmp/{{ remediation_file }}"
+        mode: '0644'
+      delegate_to: localhost
+      run_once: yes
+      become: no
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar playbook de remediación al objetivo"
+      ansible.builtin.copy:
+        src: "/tmp/{{ remediation_file }}"
+        dest: "/tmp/openscap_reports/{{ remediation_file }}"
+
+    # --- INICIO PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
+    - name: "PARCHEO | Modificar distribución en remediación (RedHat -> Rocky)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'ansible_distribution == ["'']RedHat["'']'
+        replace: 'ansible_distribution == "Rocky"'
+
+    - name: "PARCHEO | Modificar verificación de paquetes (redhat-release -> rocky-release)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'redhat-release'
+        replace: 'rocky-release'
+
+    - name: "PARCHEO | Fix GPG Key references (Red Hat -> Rocky)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'RPM-GPG-KEY-redhat-(release|beta)'
+        replace: 'RPM-GPG-KEY-Rocky-9'
+
+    - name: "PARCHEO | Replace hardcoded Red Hat OS strings in banner variables"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'Red Hat Enterprise Linux'
+        replace: 'Rocky Linux'
+
+    - name: "PARCHEO | Fix authselect command (Robust PAM reload)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'cmd:\s*authselect select .*\$\(authselect current --raw\).* --force'
+        replace: 'cmd: authselect apply-changes || authselect select sssd --force || true'
+    # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
+
+    - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
+      ansible.builtin.package:
+        name: ansible-core
+        state: present
+      
+    - name: "PREPARACIÓN | Instalar colecciones necesarias para la remediación"
+      ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
+      register: galaxy_install
+      changed_when: "'was installed successfully' in galaxy_install.stdout"
+
+    - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
+      ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
+      register: remediation_run
+      failed_when: remediation_run.rc != 0
+
+    - name: "RED | Extraer playbook de remediación (hotfix) modificado hacia AWX"
+      ansible.builtin.fetch:
+        src: "/tmp/openscap_reports/{{ remediation_file }}"
+        dest: "/tmp/{{ file_base }}-hotfix.yml"
+        flat: yes
+
+    - name: "SISTEMA DE ARCHIVOS | Mover hotfix a carpeta playbook_usado en Host AWX"
+      ansible.builtin.copy:
+        src: "/tmp/{{ file_base }}-hotfix.yml"
+        dest: "{{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
+      delegate_to: SLKVAWXTFGDES
+      become: yes
+    # --- FIN DE REMEDIACIÓN SSG ---
+
+    # --- INICIO SEGUNDO ESCANEO (POST-REMEDIACIÓN) ---
+    - name: "LOG | Informar sobre el inicio del escaneo POST-remediación"
+      ansible.builtin.debug:
+        msg: "Iniciando escaneo OpenSCAP (POST) para verificar los cambios aplicados..."
+
+    - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP POST-remediación en el objetivo"
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --profile {{ oscap_profile }}
+        --results /tmp/openscap_reports/results-post.xml
+        --report /tmp/openscap_reports/report-post.html
+        /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+      register: oscap_scan_post
+      failed_when: oscap_scan_post.rc not in [0, 2]
+
+    - name: "RED | Extraer reporte XML crudo POST desde el objetivo hacia AWX"
+      ansible.builtin.fetch:
+        src: /tmp/openscap_reports/results-post.xml
+        dest: "/tmp/{{ file_base }}-post.xml"
+        flat: yes
+
+    - name: "RED | Extraer reporte HTML legible POST desde el objetivo hacia AWX"
+      ansible.builtin.fetch:
+        src: /tmp/openscap_reports/report-post.html
+        dest: "/tmp/{{ file_base }}-post.html"
+        flat: yes
+
+    - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes POST en el Host AWX"
+      ansible.builtin.copy:
+        src: "/tmp/{{ file_base }}-post.{{ item }}"
+        dest: "{{ report_dir }}/{{ item }}/{{ file_base }}-post.{{ item }}"
+      delegate_to: SLKVAWXTFGDES
+      loop:
+        - xml
+        - html
+
+    - name: "EXTRACCIÓN | Leer score de cumplimiento POST desde el XML en el Host AWX"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}-post.xml"
+      delegate_to: SLKVAWXTFGDES
+      register: openscap_score_post
+      changed_when: false
+      become: yes
+    # --- FIN SEGUNDO ESCANEO ---
+
+    - name: "VARIABLES | Calcular el incremento (Delta) de cumplimiento"
+      ansible.builtin.set_fact:
+        score_pre: "{{ openscap_score_pre.stdout | float }}"
+        score_post: "{{ openscap_score_post.stdout | float }}"
+        score_delta: "{{ (openscap_score_post.stdout | float) - (openscap_score_pre.stdout | float) }}"
+
+    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
+      ansible.builtin.debug:
+        msg: 
+          - "=================================================================="
+          - "ESCANEO Y REMEDIACIÓN COMPLETADOS PARA: {{ inventory_hostname }}"
+          - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
+          - "------------------------------------------------------------------"
+          - "CUMPLIMIENTO PRE-REMEDIACIÓN:  {{ score_pre | round(2) }}%"
+          - "CUMPLIMIENTO POST-REMEDIACIÓN: {{ score_post | round(2) }}%"
+          - "MEJORA OBTENIDA (DELTA):       +{{ score_delta | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
+          - "--> Carpeta Base:  {{ report_dir }}"
+          - "--> Reporte PRE:   {{ report_dir }}/html/{{ file_base }}-pre.html"
+          - "--> Reporte POST:  {{ report_dir }}/html/{{ file_base }}-post.html"
+          - "--> Playbook Usado: {{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
+          - "=================================================================="
+
+    - name: "LOG | Informar sobre la limpieza del entorno"
+      ansible.builtin.debug:
+        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-rhel9-ds.xml, hotfixes, xml/html raw)"
+
+    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: absent
+
+    - name: "LIMPIEZA | Eliminar archivos temporales en AWX"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      run_once: yes
+      become: no
+      loop:
+        - /tmp/ssg-rhel9-ds.xml
+        - "/tmp/{{ remediation_file }}"
+        - "/tmp/{{ file_base }}-pre.xml"
+        - "/tmp/{{ file_base }}-pre.html"
+        - "/tmp/{{ file_base }}-post.xml"
+        - "/tmp/{{ file_base }}-post.html"
+        - "/tmp/{{ file_base }}-hotfix.yml"
