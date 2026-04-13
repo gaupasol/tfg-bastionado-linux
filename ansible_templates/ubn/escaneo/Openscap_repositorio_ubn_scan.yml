@@ -28,7 +28,7 @@
         mode: '0644'
       delegate_to: localhost
       run_once: yes
-      become: no # Se deshabilita la escalada de privilegios en el contenedor AWX local para evitar errores
+      become: no
 
     - name: Copiar el datastream desde AWX al objetivo a través de SSH (Air-gapped)
       ansible.builtin.copy:
@@ -43,7 +43,6 @@
         --report /tmp/openscap_reports/report.html
         /tmp/openscap_reports/ssg-ubuntu2204-ds.xml
       register: oscap_scan
-      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
       failed_when: oscap_scan.rc not in [0, 2]
 
     - name: Notificar finalización del escaneo
@@ -69,18 +68,21 @@
             dest: "/tmp/{{ file_base }}.html"
             flat: yes
 
-        - name: 4. Asegurar que el directorio de destino exista en el Host AWX
+        - name: 4. Asegurar que la estructura de carpetas exista en el Host AWX
           ansible.builtin.file:
-            path: /home/ibai/awx-poc-tfg/reportes
+            path: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
           become: yes
+          loop:
+            - xml
+            - html
 
-        - name: 5. Mover los reportes del contenedor AWX al Host AWX
+        - name: 5. Mover los reportes del contenedor AWX al Host AWX a sus carpetas respectivas
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "/home/ibai/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
+            dest: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
@@ -88,7 +90,7 @@
 
     # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
     - name: Extraer el porcentaje de cumplimiento desde el archivo guardado en el Host AWX
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ file_base }}.xml"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ target_name }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
