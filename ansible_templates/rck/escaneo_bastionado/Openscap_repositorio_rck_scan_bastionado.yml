@@ -181,11 +181,11 @@
         regexp: 'Red Hat Enterprise Linux'
         replace: 'Rocky Linux'
 
-    - name: "PARCHEO | Fix authselect command (Force bash evaluation via shell module)"
+    - name: "PARCHEO | Fix authselect command (Fallback to 'sssd' if no profile is set)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
-        regexp: 'command:(\s*>?-?\s*authselect select "\$\(authselect current --raw\)")'
-        replace: 'shell:\1'
+        regexp: 'cmd: authselect select "\$\(authselect current --raw\)" --force'
+        replace: 'cmd: PROFILE=$(authselect current --raw 2>/dev/null || echo "sssd"); authselect select "$PROFILE" --force'
     # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
 
     - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
