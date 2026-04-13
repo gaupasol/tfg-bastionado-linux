@@ -221,19 +221,22 @@
       become: yes
     # --- FIN DE REMEDIACIÓN SSG ---
 
-    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
+- name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
       ansible.builtin.debug:
         msg: 
           - "=================================================================="
           - "ESCANEO Y REMEDIACIÓN COMPLETADOS PARA: {{ inventory_hostname }}"
           - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
-          - "CUMPLIMIENTO PRE-REMEDIACIÓN: {{ openscap_score.stdout | float | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "CUMPLIMIENTO PRE-REMEDIACIÓN:  {{ score_pre | float | round(2) }}%"
+          - "CUMPLIMIENTO POST-REMEDIACIÓN: {{ score_post | float | round(2) }}%"
+          - "MEJORA OBTENIDA (DELTA):       +{{ score_delta | float | round(2) }}%"
           - "------------------------------------------------------------------"
           - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
-          - "--> Carpeta Base: {{ report_dir }}"
-          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
-          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
-          - "--> Playbook:     {{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
+          - "--> Carpeta Base:  {{ report_dir }}"
+          - "--> Reporte PRE:   {{ report_dir }}/html/{{ file_base }}-pre.html"
+          - "--> Reporte POST:  {{ report_dir }}/html/{{ file_base }}-post.html"
+          - "--> Playbook Usado: {{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
           - "=================================================================="
 
     - name: "LOG | Informar sobre la limpieza del entorno"
