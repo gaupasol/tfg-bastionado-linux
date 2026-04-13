@@ -184,9 +184,8 @@
     - name: "PARCHEO | Fix authselect command (Force bash evaluation via shell module)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
-        # This regex aggressively targets the authselect line regardless of indentation or 'ansible.builtin.' prefixes
-        regexp: '^(.*)command:(.*authselect select.*--raw.*)'
-        replace: '\1shell:\2'
+        regexp: 'command:(\s*>?-?\s*authselect select "\$\(authselect current --raw\)")'
+        replace: 'shell:\1'
     # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
 
     - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
