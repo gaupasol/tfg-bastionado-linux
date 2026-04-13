@@ -156,6 +156,7 @@
         src: "/tmp/{{ remediation_file }}"
         dest: "/tmp/openscap_reports/{{ remediation_file }}"
 
+# --- INICIO PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
     - name: "PARCHEO | Modificar distribución en remediación (RedHat -> Rocky)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
@@ -167,7 +168,7 @@
         path: "/tmp/openscap_reports/{{ remediation_file }}"
         regexp: 'redhat-release'
         replace: 'rocky-release'
-        
+
     - name: "PARCHEO | Fix GPG Key references (Red Hat -> Rocky)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
@@ -179,6 +180,14 @@
         path: "/tmp/openscap_reports/{{ remediation_file }}"
         regexp: 'Red Hat Enterprise Linux'
         replace: 'Rocky Linux'
+
+    - name: "PARCHEO | Fix authselect command (Force bash evaluation via shell module)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        # This regex aggressively targets the authselect line regardless of indentation or 'ansible.builtin.' prefixes
+        regexp: '^(.*)command:(.*authselect select.*--raw.*)'
+        replace: '\1shell:\2'
+    # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
 
     - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
       ansible.builtin.package:
