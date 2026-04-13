@@ -184,8 +184,8 @@
     - name: "PARCHEO | Fix authselect command (Fallback to 'sssd' if no profile is set)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
-        regexp: 'cmd: authselect select "\$\(authselect current --raw\)" --force'
-        replace: 'cmd: PROFILE=$(authselect current --raw 2>/dev/null || echo "sssd"); authselect select "$PROFILE" --force'
+        regexp: 'authselect select .*\$\(authselect current --raw\).* --force'
+        replace: 'PROFILE=$(authselect current --raw 2>/dev/null || echo "sssd"); authselect select "$PROFILE" --force'
     # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
 
     - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
