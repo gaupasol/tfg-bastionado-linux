@@ -80,14 +80,17 @@
 
     - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
       block:
-        - name: "VARIABLES | Generar nomenclatura dinámica de archivos"
+        - name: "VARIABLES | Generar nomenclatura dinámica de archivos y carpetas"
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_name: "{{ inventory_hostname }}"
+            scan_type: "escaneo-bastionado"
+            unique_id: "{{ 100000000 | random | to_uuid | split('-') | first | upper }}"
 
-        - name: "VARIABLES | Construir base del nombre del archivo"
+        - name: "VARIABLES | Construir rutas y base de archivos (con UUID)"
           ansible.builtin.set_fact:
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            file_base: "{{ ansible_date_time.date }}-{{ unique_id }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ ansible_date_time.date }}-{{ unique_id }}-{{ scan_type }}"
 
         - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
@@ -103,12 +106,12 @@
 
         - name: "LOG | Informar sobre la creación de la estructura de carpetas destino"
           ansible.builtin.debug:
-            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ awx_report_base_dir }}/{{ target_name }}/[xml,html]"
+            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ report_dir }}/[xml, html, playbook_usado]"
           delegate_to: SLKVAWXTFGDES
 
         - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
           ansible.builtin.file:
-            path: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}"
+            path: "{{ report_dir }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
@@ -116,11 +119,12 @@
           loop:
             - xml
             - html
+            - playbook_usado
 
         - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
@@ -128,7 +132,7 @@
 
     # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
     - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
@@ -156,7 +160,7 @@
         src: "/tmp/{{ remediation_file }}"
         dest: "/tmp/openscap_reports/{{ remediation_file }}"
 
-# --- INICIO PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
+    # --- INICIO PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
     - name: "PARCHEO | Modificar distribución en remediación (RedHat -> Rocky)"
       ansible.builtin.replace:
         path: "/tmp/openscap_reports/{{ remediation_file }}"
@@ -193,12 +197,10 @@
         name: ansible-core
         state: present
       
-      # --- AÑADE ESTA NUEVA TAREA ---
-    - name: "PREPARACIÓN | Instalar colección community.general necesaria para la remediación"
+    - name: "PREPARACIÓN | Instalar colecciones necesarias para la remediación"
       ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
       register: galaxy_install
       changed_when: "'was installed successfully' in galaxy_install.stdout"
-    # ------------------------------
 
     - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
       ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
@@ -211,10 +213,10 @@
         dest: "/tmp/{{ file_base }}-hotfix.yml"
         flat: yes
 
-    - name: "SISTEMA DE ARCHIVOS | Mover hotfix a carpeta HTML en Host AWX"
+    - name: "SISTEMA DE ARCHIVOS | Mover hotfix a carpeta playbook_usado en Host AWX"
       ansible.builtin.copy:
         src: "/tmp/{{ file_base }}-hotfix.yml"
-        dest: "{{ awx_report_base_dir }}/{{ target_name }}/html/{{ file_base }}-hotfix.yml"
+        dest: "{{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
       delegate_to: SLKVAWXTFGDES
       become: yes
     # --- FIN DE REMEDIACIÓN SSG ---
@@ -228,9 +230,10 @@
           - "CUMPLIMIENTO PRE-REMEDIACIÓN: {{ openscap_score.stdout | float | round(2) }}%"
           - "------------------------------------------------------------------"
           - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
-          - "--> Reporte HTML: {{ awx_report_base_dir }}/{{ target_name }}/html/{{ file_base }}.html"
-          - "--> Playbook Hotfix: {{ awx_report_base_dir }}/{{ target_name }}/html/{{ file_base }}-hotfix.yml"
-          - "--> Reporte XML:  {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+          - "--> Carpeta Base: {{ report_dir }}"
+          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
+          - "--> Playbook:     {{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
           - "=================================================================="
 
     - name: "LOG | Informar sobre la limpieza del entorno"
@@ -252,3 +255,6 @@
       loop:
         - /tmp/ssg-rhel9-ds.xml
         - "/tmp/{{ remediation_file }}"
+        - "/tmp/{{ file_base }}.xml"
+        - "/tmp/{{ file_base }}.html"
+        - "/tmp/{{ file_base }}-hotfix.yml"
