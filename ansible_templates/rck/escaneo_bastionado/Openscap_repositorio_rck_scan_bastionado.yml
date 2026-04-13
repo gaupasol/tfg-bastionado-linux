@@ -173,6 +173,18 @@
         name: ansible-core
         state: present
       
+      # --- AÑADE ESTA NUEVA TAREA ---
+    - name: "PREPARACIÓN | Instalar colección community.general necesaria para la remediación"
+      ansible.builtin.command: "ansible-galaxy collection install community.general"
+      register: galaxy_install
+      changed_when: "'was installed successfully' in galaxy_install.stdout"
+    # ------------------------------
+
+    - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
+      ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
+      register: remediation_run
+      failed_when: remediation_run.rc != 0
+      
     - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
       ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
       register: remediation_run
