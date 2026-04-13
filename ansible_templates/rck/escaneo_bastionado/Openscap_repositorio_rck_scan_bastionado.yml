@@ -204,11 +204,6 @@
       ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
       register: remediation_run
       failed_when: remediation_run.rc != 0
-      
-    - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
-      ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
-      register: remediation_run
-      failed_when: remediation_run.rc != 0
 
     - name: "RED | Extraer playbook de remediación (hotfix) modificado hacia AWX"
       ansible.builtin.fetch:
