@@ -175,7 +175,7 @@
       
       # --- AÑADE ESTA NUEVA TAREA ---
     - name: "PREPARACIÓN | Instalar colección community.general necesaria para la remediación"
-      ansible.builtin.command: "ansible-galaxy collection install community.general"
+      ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
       register: galaxy_install
       changed_when: "'was installed successfully' in galaxy_install.stdout"
     # ------------------------------
