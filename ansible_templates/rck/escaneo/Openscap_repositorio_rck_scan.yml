@@ -1,54 +1,72 @@
-- name: Ejecutar escaneo de seguridad OpenSCAP en Rocky Linux 9
+- name: "Evaluación de Seguridad: OpenSCAP CIS Level 1 Server (Rocky Linux 9)"
   hosts: "all:!SLKVAWXTFGDES"  # Apunta a todas las máquinas excepto al host de AWX
   become: yes
   gather_facts: yes
   vars:
-    # Define la normativa aquí para que se actualice en todo el playbook automáticamente
     oscap_profile: "xccdf_org.ssgproject.content_profile_cis_server_l1"
     benchmark: "cis_server_l1"
     github_raw_xml_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-rhel9-ds.xml"
+    awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
-    - name: Instalar el escáner OpenSCAP (sin las guías locales)
+    - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
       ansible.builtin.package:
         name: openscap-scanner
         state: present
 
-    - name: Asegurar que el directorio temporal de reportes exista en el objetivo
+    - name: "LOG | Informar sobre la creación del directorio temporal"
+      ansible.builtin.debug:
+        msg: "Verificando y/o creando el directorio temporal para reportes en el objetivo: /tmp/openscap_reports"
+
+    - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: directory
         mode: '0755'
 
     # --- INICIO DEL PARCHEO DEL DATASTREAM ---
-    - name: Descargar el datastream desde GitHub al nodo de control (AWX)
+    - name: "LOG | Informar sobre la descarga del datastream"
+      ansible.builtin.debug:
+        msg: "Buscando y descargando el archivo XML fuente desde GitHub ({{ github_raw_xml_url }}) al nodo AWX local (/tmp/ssg-rhel9-ds.xml)"
+      delegate_to: localhost
+      run_once: yes
+
+    - name: "RED | Descargar el datastream desde GitHub al nodo de control (AWX)"
       ansible.builtin.get_url:
         url: "{{ github_raw_xml_url }}"
         dest: /tmp/ssg-rhel9-ds.xml
         mode: '0644'
       delegate_to: localhost
       run_once: yes
-      become: no # Se deshabilita la escalada de privilegios en el contenedor AWX local para evitar errores
+      become: no
 
-    - name: Copiar el datastream desde AWX al objetivo a través de SSH (Air-gapped)
+    - name: "LOG | Informar sobre la transferencia de archivos"
+      ansible.builtin.debug:
+        msg: "Transfiriendo ssg-rhel9-ds.xml desde AWX hacia el objetivo {{ inventory_hostname }}:/tmp/openscap_reports/ssg-rocky9-custom-ds.xml"
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
       ansible.builtin.copy:
         src: /tmp/ssg-rhel9-ds.xml
         dest: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
 
-    - name: Parchear verificación RPM (Cambiar redhat-release por rocky-release)
+    - name: "PARCHEO | Modificar verificación RPM (redhat-release -> rocky-release)"
       ansible.builtin.replace:
         path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
         regexp: 'redhat-release'
         replace: 'rocky-release'
 
-    - name: Parchear verificación CPE (Cambiar XCCDF para aceptar el entorno Rocky)
+    - name: "PARCHEO | Modificar verificación CPE (redhat:enterprise_linux -> rocky:rocky)"
       ansible.builtin.replace:
         path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
         regexp: 'cpe:/o:redhat:enterprise_linux'
         replace: 'cpe:/o:rocky:rocky'
     # --- FIN DEL PARCHEO DEL DATASTREAM ---
 
-    - name: Ejecutar evaluación OpenSCAP con el XML parcheado
+    - name: "LOG | Informar sobre el inicio del escaneo"
+      ansible.builtin.debug:
+        msg: "Iniciando escaneo OpenSCAP con el perfil '{{ oscap_profile }}'. Esto puede tardar unos minutos..."
+
+    - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
       ansible.builtin.command: >
         oscap xccdf eval
         --profile {{ oscap_profile }}
@@ -56,35 +74,39 @@
         --report /tmp/openscap_reports/report.html
         /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
       register: oscap_scan
-      # oscap devuelve el código de salida 2 si se encuentran vulnerabilidades
       failed_when: oscap_scan.rc not in [0, 2]
 
-    - name: Notificar finalización del escaneo
+    - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
       block:
-        - name: 1a. Definir variables base para la nomenclatura
+        - name: "VARIABLES | Generar nomenclatura dinámica de archivos"
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_name: "{{ inventory_hostname }}"
 
-        - name: 1b. Construir el nombre de archivo dinámico final
+        - name: "VARIABLES | Construir base del nombre del archivo"
           ansible.builtin.set_fact:
             file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
-        - name: 2. Obtener reporte XML del objetivo escaneado al contenedor AWX
+        - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
             src: /tmp/openscap_reports/results.xml
             dest: "/tmp/{{ file_base }}.xml"
             flat: yes
 
-        - name: 3. Obtener reporte HTML del objetivo escaneado al contenedor AWX
+        - name: "RED | Extraer reporte HTML legible desde el objetivo hacia AWX"
           ansible.builtin.fetch:
             src: /tmp/openscap_reports/report.html
             dest: "/tmp/{{ file_base }}.html"
             flat: yes
 
-        - name: 4. Asegurar que la estructura de carpetas exista en el Host AWX
+        - name: "LOG | Informar sobre la creación de la estructura de carpetas destino"
+          ansible.builtin.debug:
+            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ awx_report_base_dir }}/{{ target_name }}/[xml,html]"
+          delegate_to: SLKVAWXTFGDES
+
+        - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
           ansible.builtin.file:
-            path: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}"
+            path: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
@@ -93,34 +115,47 @@
             - xml
             - html
 
-        - name: 5. Mover los reportes del contenedor AWX al Host AWX a sus carpetas respectivas
+        - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
+            dest: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
             - html
 
     # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
-    - name: Extraer el porcentaje de cumplimiento desde el archivo guardado en el Host AWX
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ target_name }}/xml/{{ file_base }}.xml"
+    - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
       become: yes
 
-    - name: Mostrar el porcentaje de cumplimiento final en consola
+    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
       ansible.builtin.debug:
-        msg: "El porcentaje de cumplimiento ({{ benchmark | replace('_', ' ') | upper }}) para {{ inventory_hostname }} es: {{ openscap_score.stdout | float | round(2) }}%"
+        msg: 
+          - "=================================================================="
+          - "ESCANEO COMPLETADO PARA: {{ inventory_hostname }}"
+          - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
+          - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
+          - "--> Reporte HTML: {{ awx_report_base_dir }}/{{ target_name }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+          - "=================================================================="
     # --- FIN DE EXTRACCIÓN DE PORCENTAJE ---
 
-    - name: Limpiar archivos temporales en el objetivo
+    - name: "LOG | Informar sobre la limpieza del entorno"
+      ansible.builtin.debug:
+        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-rhel9-ds.xml)"
+
+    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: absent
 
-    - name: Limpiar el archivo XML descargado en el contenedor AWX local
+    - name: "LIMPIEZA | Eliminar datastream XML temporal en AWX"
       ansible.builtin.file:
         path: /tmp/ssg-rhel9-ds.xml
         state: absent
