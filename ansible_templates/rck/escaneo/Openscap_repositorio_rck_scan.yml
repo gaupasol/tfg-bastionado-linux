@@ -34,7 +34,6 @@
       ansible.builtin.copy:
         src: /tmp/ssg-rhel9-ds.xml
         dest: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
-        # remote_src: yes (ELIMINADO: ahora el origen es el nodo de control, no la máquina remota)
 
     - name: Parchear verificación RPM (Cambiar redhat-release por rocky-release)
       ansible.builtin.replace:
@@ -83,18 +82,21 @@
             dest: "/tmp/{{ file_base }}.html"
             flat: yes
 
-        - name: 4. Asegurar que el directorio de destino exista en el Host AWX
+        - name: 4. Asegurar que la estructura de carpetas exista en el Host AWX
           ansible.builtin.file:
-            path: /home/ibai/awx-poc-tfg/reportes
+            path: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
           become: yes
+          loop:
+            - xml
+            - html
 
-        - name: 5. Mover los reportes del contenedor AWX al Host AWX
+        - name: 5. Mover los reportes del contenedor AWX al Host AWX a sus carpetas respectivas
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "/home/ibai/awx-poc-tfg/reportes/{{ file_base }}.{{ item }}"
+            dest: "/home/ibai/awx-poc-tfg/reportes/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
@@ -102,7 +104,7 @@
 
     # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
     - name: Extraer el porcentaje de cumplimiento desde el archivo guardado en el Host AWX
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ file_base }}.xml"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' /home/ibai/awx-poc-tfg/reportes/{{ target_name }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
