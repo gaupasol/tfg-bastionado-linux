@@ -78,14 +78,17 @@
 
     - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
       block:
-        - name: "VARIABLES | Generar nomenclatura dinámica de archivos"
+        - name: "VARIABLES | Generar nomenclatura dinámica de archivos y carpetas"
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_name: "{{ inventory_hostname }}"
+            scan_type: "escaneo"
+            unique_id: "{{ 100000000 | random | to_uuid | split('-') | first | upper }}"
 
-        - name: "VARIABLES | Construir base del nombre del archivo"
+        - name: "VARIABLES | Construir rutas y base de archivos (con UUID)"
           ansible.builtin.set_fact:
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            file_base: "{{ ansible_date_time.date }}-{{ unique_id }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ ansible_date_time.date }}-{{ unique_id }}-{{ scan_type }}"
 
         - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
@@ -101,12 +104,12 @@
 
         - name: "LOG | Informar sobre la creación de la estructura de carpetas destino"
           ansible.builtin.debug:
-            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ awx_report_base_dir }}/{{ target_name }}/[xml,html]"
+            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ report_dir }}/[xml, html]"
           delegate_to: SLKVAWXTFGDES
 
         - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
           ansible.builtin.file:
-            path: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}"
+            path: "{{ report_dir }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
@@ -118,7 +121,7 @@
         - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
@@ -126,7 +129,7 @@
 
     # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
     - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
@@ -141,24 +144,29 @@
           - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
           - "------------------------------------------------------------------"
           - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
-          - "--> Reporte HTML: {{ awx_report_base_dir }}/{{ target_name }}/html/{{ file_base }}.html"
-          - "--> Reporte XML:  {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+          - "--> Carpeta Base: {{ report_dir }}"
+          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
           - "=================================================================="
     # --- FIN DE EXTRACCIÓN DE PORCENTAJE ---
 
     - name: "LOG | Informar sobre la limpieza del entorno"
       ansible.builtin.debug:
-        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-rhel9-ds.xml)"
+        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-rhel9-ds.xml y reportes extraídos)"
 
     - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
       ansible.builtin.file:
         path: /tmp/openscap_reports
         state: absent
 
-    - name: "LIMPIEZA | Eliminar datastream XML temporal en AWX"
+    - name: "LIMPIEZA | Eliminar archivos temporales en AWX"
       ansible.builtin.file:
-        path: /tmp/ssg-rhel9-ds.xml
+        path: "{{ item }}"
         state: absent
       delegate_to: localhost
       run_once: yes
       become: no
+      loop:
+        - /tmp/ssg-rhel9-ds.xml
+        - "/tmp/{{ file_base }}.xml"
+        - "/tmp/{{ file_base }}.html"
