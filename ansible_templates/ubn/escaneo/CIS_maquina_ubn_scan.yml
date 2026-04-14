@@ -26,8 +26,8 @@
         update_cache: yes
 
     - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
-      community.general.archive:
-        path: "{{ cis_pro_source_dir }}/*"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
         state: directory
         mode: '0755'
 
@@ -37,8 +37,9 @@
       run_once: yes
 
     - name: "SISTEMA DE ARCHIVOS | Comprimir archivos CIS PRO en el host origen"
-      ansible.builtin.archive:
-        path: "{{ cis_pro_source_dir }}"
+      community.general.archive:
+        # Note the '/*' at the end to zip the contents, not the parent folder
+        path: "{{ cis_pro_source_dir }}/*"
         dest: "/tmp/cis_ubn2204_pro.tgz"
         format: gz
       delegate_to: SLKVAWXTFGDES
@@ -59,10 +60,16 @@
         src: "/tmp/cis_ubn2204_pro.tgz"
         dest: "/tmp/openscap_reports/cis_ubn2204_pro.tgz"
 
+    - name: "SISTEMA DE ARCHIVOS | Crear subdirectorio específico para los archivos CIS en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports/ubn2204_scan
+        state: directory
+        mode: '0755'
+
     - name: "SISTEMA DE ARCHIVOS | Descomprimir archivos CIS PRO en el objetivo"
       ansible.builtin.unarchive:
         src: "/tmp/openscap_reports/cis_ubn2204_pro.tgz"
-        dest: "/tmp/openscap_reports/"
+        dest: "/tmp/openscap_reports/ubn2204_scan/"
         remote_src: yes
 
     - name: "LOG | Informar sobre el inicio del escaneo"
@@ -78,7 +85,7 @@
         {{ cis_xccdf_file }}
       args:
         # Running from inside the extracted folder ensures OVAL/SCE relative paths resolve correctly
-        chdir: "/tmp/openscap_reports/ubn2204"
+        chdir: "/tmp/openscap_reports/ubn2204_scan"
       register: oscap_scan
       failed_when: oscap_scan.rc not in [0, 2]
 
