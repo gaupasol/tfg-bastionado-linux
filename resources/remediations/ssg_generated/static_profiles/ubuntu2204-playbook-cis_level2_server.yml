@@ -4586,7 +4586,7 @@
     - medium_disruption
     - medium_severity
     - no_reboot_needed
-
+    
   - name: Collect users with no password
     ansible.builtin.command: |
       awk -F: '!$2 {print $1}' /etc/shadow
@@ -4606,9 +4606,8 @@
     - no_reboot_needed
     - restrict_strategy
     
-    - name: Lock users with no password
+  - name: Lock users with no password
     ansible.builtin.command: "passwd -l {{ item }}"
-    # MODIFICATION: Use the difference filter to skip your accounts
     with_items: "{{ users_nopasswd.stdout_lines | difference(['lksistemas', 'ansible_sshkey', 'ansible_passwd']) }}"
     when:
     - '"linux-base" in ansible_facts.packages'
