@@ -26,7 +26,7 @@
         update_cache: yes
 
     - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
-      community.general.file:
+      community.general.archive:
         path: "{{ cis_pro_source_dir }}/*"
         state: directory
         mode: '0755'
