@@ -10,9 +10,13 @@
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
+  
     - name: "PREPARACIÓN | Instalar dependencias"
       ansible.builtin.apt:
-        name: ['libopenscap8', 'libopenscap-engine-sce8', 'tar']
+        name: 
+          - libopenscap8
+          - openscap-scanner
+          - tar
         state: present
         update_cache: yes
 
@@ -24,6 +28,8 @@
       loop:
         - /tmp/openscap_reports
         - /tmp/openscap_reports/ubn2204_scan
+        
+        
 
     - name: "SISTEMA DE ARCHIVOS | Comprimir origen usando comando tar (Método simple)"
       ansible.builtin.command: "tar -czf /tmp/cis_ubn2204_pro.tgz -C {{ cis_pro_source_dir }} ."
