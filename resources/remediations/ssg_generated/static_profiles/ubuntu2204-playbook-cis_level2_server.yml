@@ -2383,6 +2383,8 @@
     ansible.builtin.find:
       paths:
       - /etc/sudoers.d/
+      # EXCEPCION: Add this line to every Find task targeting sudoers.d
+      excludes: ['lksistemas', 'ansible_sshkey', 'ansible_passwd']
     register: sudoers
     when: '"linux-base" in ansible_facts.packages'
     tags:
@@ -2419,6 +2421,8 @@
     ansible.builtin.find:
       paths:
       - /etc/sudoers.d/
+      # EXCLUSION: Add this line to every Find task targeting sudoers.d
+      excludes: ['lksistemas', 'ansible_sshkey', 'ansible_passwd']
     register: sudoers
     when: '"linux-base" in ansible_facts.packages'
     tags:
@@ -2461,6 +2465,8 @@
     ansible.builtin.find:
       paths:
       - /etc/sudoers.d/
+      # EXCLUSION: Add this line to every Find task targeting sudoers.d
+      excludes: ['lksistemas', 'ansible_sshkey', 'ansible_passwd']
     register: sudoers
     when: '"linux-base" in ansible_facts.packages'
     tags:
@@ -4600,13 +4606,13 @@
     - no_reboot_needed
     - restrict_strategy
 
-  - name: Lock users with no password
-    ansible.builtin.command: |
-      passwd -l {{ item }}
-    with_items: '{{ users_nopasswd.stdout_lines }}'
+- name: Lock users with no password
+    ansible.builtin.command: passwd -l {{ item }}
+    # MODIFICATION: Use the difference filter to skip your accounts
+    with_items: "{{ users_nopasswd.stdout_lines | difference(['lksistemas', 'ansible_sshkey', 'ansible_passwd']) }}"
     when:
-    - '"linux-base" in ansible_facts.packages'
-    - users_nopasswd is not skipped and users_nopasswd.stdout_lines | length > 0
+      - '"linux-base" in ansible_facts.packages'
+      - users_nopasswd is not skipped and users_nopasswd.stdout_lines | length > 0
     tags:
     - DISA-STIG-UBTU-22-611065
     - NIST-800-53-CM-6(b)
@@ -4685,7 +4691,7 @@
     ansible.builtin.lineinfile:
       path: /etc/group
       regexp: ^({{ var_pam_wheel_group_for_su }}:[^:]+:[0-9]+:).*$
-      line: \1
+      line: \1lksistemas,ansible_sshkey,ansible_passwd
       backrefs: true
     when: '"linux-base" in ansible_facts.packages'
     tags:
