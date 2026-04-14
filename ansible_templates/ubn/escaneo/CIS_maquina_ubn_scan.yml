@@ -26,8 +26,8 @@
         update_cache: yes
 
     - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
-      ansible.builtin.file:
-        path: /tmp/openscap_reports
+      community.general.file:
+        path: "{{ cis_pro_source_dir }}/*"
         state: directory
         mode: '0755'
 
