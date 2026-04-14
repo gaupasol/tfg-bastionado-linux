@@ -15,7 +15,6 @@
       ansible.builtin.apt:
         name: 
           - libopenscap8
-          - openscap-scanner
           - tar
         state: present
         update_cache: yes
