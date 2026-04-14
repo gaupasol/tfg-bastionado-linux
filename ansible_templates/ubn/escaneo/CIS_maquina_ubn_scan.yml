@@ -54,6 +54,10 @@
         dest: "/tmp/openscap_reports/ubn2204_scan/"
         remote_src: yes
 
+    - name: "SISTEMA DE ARCHIVOS | Asegurar que los scripts SCE sean ejecutables"
+      ansible.builtin.command: "chmod -R +x /tmp/openscap_reports/ubn2204_scan/sce/"
+      # This forces every .sh file in that folder to be executable by OpenSCAP
+
     - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
       ansible.builtin.command: >
         oscap xccdf eval
