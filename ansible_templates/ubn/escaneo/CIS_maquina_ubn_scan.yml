@@ -10,10 +10,9 @@
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
-  
     - name: "PREPARACIÓN | Instalar dependencias"
       ansible.builtin.apt:
-        name: 
+        name:
           - libopenscap8
           - tar
         state: present
@@ -27,10 +26,8 @@
       loop:
         - /tmp/openscap_reports
         - /tmp/openscap_reports/ubn2204_scan
-        
-        
 
-    - name: "SISTEMA DE ARCHIVOS | Comprimir origen usando comando tar (Método simple)"
+    - name: "SISTEMA DE ARCHIVOS | Comprimir origen usando comando tar"
       ansible.builtin.command: "tar -czf /tmp/cis_ubn2204_pro.tgz -C {{ cis_pro_source_dir }} ."
       delegate_to: SLKVAWXTFGDES
       run_once: yes
@@ -79,14 +76,17 @@
           ansible.builtin.set_fact:
             file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
 
-        - name: "RED | Fetch reportes"
+        - name: "RED | Extraer reporte XML crudo hacia AWX"
           ansible.builtin.fetch:
-            src: "/tmp/openscap_reports/{{ item }}"
-            dest: "/tmp/{{ file_base }}.{{ item | splitext | last }}"
+            src: "/tmp/openscap_reports/results.xml"
+            dest: "/tmp/{{ file_base }}.xml"
             flat: yes
-          loop:
-            - results.xml
-            - report.html
+
+        - name: "RED | Extraer reporte HTML legible hacia AWX"
+          ansible.builtin.fetch:
+            src: "/tmp/openscap_reports/report.html"
+            dest: "/tmp/{{ file_base }}.html"
+            flat: yes
 
         - name: "SISTEMA DE ARCHIVOS | Crear carpetas finales"
           ansible.builtin.file:
@@ -95,14 +95,18 @@
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
           become: yes
-          loop: ['xml', 'html']
+          loop:
+            - xml
+            - html
 
         - name: "SISTEMA DE ARCHIVOS | Mover a final"
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
             dest: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
-          loop: ['xml', 'html']
+          loop:
+            - xml
+            - html
 
     - name: "EXTRACCIÓN | Score"
       ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
