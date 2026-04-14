@@ -172,6 +172,12 @@
       register: remediation_run
       failed_when: remediation_run.rc != 0
 
+    - name: "SISTEMA DE ARCHIVOS | Asegurar lectura del hotfix por el usuario Ansible (fetch no soporta become)"
+      ansible.builtin.file:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        mode: '0644'
+      become: yes
+
     - name: "RED | Extraer playbook de remediación (hotfix) hacia AWX"
       ansible.builtin.fetch:
         src: "/tmp/openscap_reports/{{ remediation_file }}"
