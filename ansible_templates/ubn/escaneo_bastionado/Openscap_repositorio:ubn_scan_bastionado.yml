@@ -14,8 +14,7 @@
     - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
       ansible.builtin.package:
         name:
-          - openscap-scanner
-          - libopenscap8
+          - libopenscap8   # En Ubuntu 22.04 este paquete incluye el binario oscap
         state: present
 
     - name: "LOG | Informar sobre la creación del directorio temporal"
@@ -152,10 +151,16 @@
     # No se requiere parcheo del playbook de remediación: SSG genera el playbook
     # para Ubuntu 22.04 de forma nativa, sin referencias a distribuciones externas.
 
-    - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
+    - name: "PREPARACIÓN | Instalar pip3 en el objetivo"
       ansible.builtin.package:
-        name: ansible-core
+        name: python3-pip
         state: present
+
+    - name: "PREPARACIÓN | Instalar ansible-core vía pip (evita bug resolvelib de Ubuntu 22.04)"
+      ansible.builtin.pip:
+        name: ansible-core
+        state: latest
+        executable: pip3
 
     - name: "PREPARACIÓN | Instalar colecciones necesarias para la remediación"
       ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
@@ -166,6 +171,12 @@
       ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
       register: remediation_run
       failed_when: remediation_run.rc != 0
+
+    - name: "SISTEMA DE ARCHIVOS | Asegurar lectura del hotfix por el usuario Ansible (fetch no soporta become)"
+      ansible.builtin.file:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        mode: '0644'
+      become: yes
 
     - name: "RED | Extraer playbook de remediación (hotfix) hacia AWX"
       ansible.builtin.fetch:
