@@ -14,8 +14,7 @@
     - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
       ansible.builtin.package:
         name:
-          - openscap-scanner
-          - libopenscap8
+          - libopenscap8   # En Ubuntu 22.04 este paquete incluye el binario oscap
         state: present
 
     - name: "LOG | Informar sobre la creación del directorio temporal"
