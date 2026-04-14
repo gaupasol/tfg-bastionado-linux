@@ -1,20 +1,19 @@
-- name: "Evaluación y Remediación de Seguridad: OpenSCAP CIS Level 2 Server (Ubuntu 22.04)"
+- name: "Evaluación y Remediación de Seguridad: OpenSCAP CIS Level 1 Server (Rocky Linux 9)"
   hosts: "all:!SLKVAWXTFGDES"  # Apunta a todas las máquinas excepto al host de AWX
   become: yes
   gather_facts: yes
   vars:
-    oscap_profile: "xccdf_org.ssgproject.content_profile_cis_level2_server"
-    benchmark: "cis_level2_server"
-    github_raw_xml_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-ubuntu2204-ds.xml"
+    oscap_profile: "xccdf_org.ssgproject.content_profile_cis_server_l1"
+    benchmark: "cis_server_l1"
+    github_raw_xml_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-rhel9-ds.xml"
     github_remediation_base_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/remediations/ssg_generated/static_profiles"
-    remediation_file: "ubuntu2204-playbook-{{ benchmark }}.yml"
+    remediation_file: "rhel9-playbook-{{ benchmark }}.yml"
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
     - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
       ansible.builtin.package:
-        name:
-          - libopenscap8   # En Ubuntu 22.04 este paquete incluye el binario oscap
+        name: openscap-scanner
         state: present
 
     - name: "LOG | Informar sobre la creación del directorio temporal"
@@ -27,6 +26,7 @@
         state: directory
         mode: '0755'
 
+    # --- INICIO DEL PARCHEO DEL DATASTREAM ---
     - name: "LOG | Informar sobre la descarga del datastream"
       ansible.builtin.debug:
         msg: "Buscando y descargando el archivo XML fuente desde GitHub al nodo AWX local"
@@ -36,7 +36,7 @@
     - name: "RED | Descargar el datastream desde GitHub al nodo de control (AWX)"
       ansible.builtin.get_url:
         url: "{{ github_raw_xml_url }}"
-        dest: /tmp/ssg-ubuntu2204-ds.xml
+        dest: /tmp/ssg-rhel9-ds.xml
         mode: '0644'
       delegate_to: localhost
       run_once: yes
@@ -44,14 +44,25 @@
 
     - name: "LOG | Informar sobre la transferencia de archivos"
       ansible.builtin.debug:
-        msg: "Transfiriendo ssg-ubuntu2204-ds.xml hacia el objetivo {{ inventory_hostname }}"
+        msg: "Transfiriendo ssg-rhel9-ds.xml hacia el objetivo {{ inventory_hostname }}"
 
     - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
       ansible.builtin.copy:
-        src: /tmp/ssg-ubuntu2204-ds.xml
-        dest: /tmp/openscap_reports/ssg-ubuntu2204-ds.xml
+        src: /tmp/ssg-rhel9-ds.xml
+        dest: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
 
-    # No se requiere parcheo del datastream: SSG reconoce Ubuntu 22.04 de forma nativa.
+    - name: "PARCHEO | Modificar verificación RPM (redhat-release -> rocky-release)"
+      ansible.builtin.replace:
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'redhat-release'
+        replace: 'rocky-release'
+
+    - name: "PARCHEO | Modificar verificación CPE (redhat:enterprise_linux -> rocky:rocky)"
+      ansible.builtin.replace:
+        path: /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
+        regexp: 'cpe:/o:redhat:enterprise_linux'
+        replace: 'cpe:/o:rocky:rocky'
+    # --- FIN DEL PARCHEO DEL DATASTREAM ---
 
     - name: "LOG | Informar sobre el inicio del escaneo"
       ansible.builtin.debug:
@@ -63,7 +74,7 @@
         --profile {{ oscap_profile }}
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
-        /tmp/openscap_reports/ssg-ubuntu2204-ds.xml
+        /tmp/openscap_reports/ssg-rocky9-custom-ds.xml
       register: oscap_scan
       failed_when: oscap_scan.rc not in [0, 2]
 
@@ -119,15 +130,16 @@
             - xml
             - html
 
-    # --- EXTRACCIÓN DE PORCENTAJE DE CUMPLIMIENTO ---
+    # --- INICIO DE EXTRACCIÓN DE PORCENTAJE EN EL HOST ---
     - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
       ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
       become: yes
+    # --- FIN DE EXTRACCIÓN DE PORCENTAJE ---
 
-    # --- REMEDIACIÓN SSG ---
+    # --- INICIO DE REMEDIACIÓN SSG ---
     - name: "LOG | Informar sobre la descarga del playbook de remediación"
       ansible.builtin.debug:
         msg: "Descargando playbook de remediación desde GitHub ({{ github_remediation_base_url }}/{{ remediation_file }})"
@@ -148,14 +160,43 @@
         src: "/tmp/{{ remediation_file }}"
         dest: "/tmp/openscap_reports/{{ remediation_file }}"
 
-    # No se requiere parcheo del playbook de remediación: SSG genera el playbook
-    # para Ubuntu 22.04 de forma nativa, sin referencias a distribuciones externas.
+    # --- INICIO PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
+    - name: "PARCHEO | Modificar distribución en remediación (RedHat -> Rocky)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'ansible_distribution == ["'']RedHat["'']'
+        replace: 'ansible_distribution == "Rocky"'
+
+    - name: "PARCHEO | Modificar verificación de paquetes (redhat-release -> rocky-release)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'redhat-release'
+        replace: 'rocky-release'
+
+    - name: "PARCHEO | Fix GPG Key references (Red Hat -> Rocky)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'RPM-GPG-KEY-redhat-(release|beta)'
+        replace: 'RPM-GPG-KEY-Rocky-9'
+
+    - name: "PARCHEO | Replace hardcoded Red Hat OS strings in banner variables"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'Red Hat Enterprise Linux'
+        replace: 'Rocky Linux'
+
+    - name: "PARCHEO | Fix authselect command (Robust PAM reload)"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: 'cmd:\s*authselect select .*\$\(authselect current --raw\).* --force'
+        replace: 'cmd: authselect apply-changes || authselect select sssd --force || true'
+    # --- FIN PARCHEOS DEL PLAYBOOK DE REMEDIACIÓN ---
 
     - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
       ansible.builtin.package:
         name: ansible-core
         state: present
-
+      
     - name: "PREPARACIÓN | Instalar colecciones necesarias para la remediación"
       ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
       register: galaxy_install
@@ -166,7 +207,7 @@
       register: remediation_run
       failed_when: remediation_run.rc != 0
 
-    - name: "RED | Extraer playbook de remediación (hotfix) hacia AWX"
+    - name: "RED | Extraer playbook de remediación (hotfix) modificado hacia AWX"
       ansible.builtin.fetch:
         src: "/tmp/openscap_reports/{{ remediation_file }}"
         dest: "/tmp/{{ file_base }}-hotfix.yml"
@@ -178,11 +219,11 @@
         dest: "{{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
       delegate_to: SLKVAWXTFGDES
       become: yes
+    # --- FIN DE REMEDIACIÓN SSG ---
 
-    # --- RESUMEN FINAL ---
     - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
       ansible.builtin.debug:
-        msg:
+        msg: 
           - "=================================================================="
           - "ESCANEO Y REMEDIACIÓN COMPLETADOS PARA: {{ inventory_hostname }}"
           - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
@@ -197,7 +238,7 @@
 
     - name: "LOG | Informar sobre la limpieza del entorno"
       ansible.builtin.debug:
-        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-ubuntu2204-ds.xml, hotfixes)"
+        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-rhel9-ds.xml, hotfixes)"
 
     - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
       ansible.builtin.file:
@@ -212,7 +253,7 @@
       run_once: yes
       become: no
       loop:
-        - /tmp/ssg-ubuntu2204-ds.xml
+        - /tmp/ssg-rhel9-ds.xml
         - "/tmp/{{ remediation_file }}"
         - "/tmp/{{ file_base }}.xml"
         - "/tmp/{{ file_base }}.html"
