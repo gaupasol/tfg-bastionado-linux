@@ -7,6 +7,7 @@
     benchmark: "cis_server_l1_pro"
     cis_pro_source_dir: "/home/ibai/awx-poc-tfg/CIS-PRO-xml/ubn2204"
     cis_xccdf_file: "CIS_Ubuntu_Linux_22.04_LTS_Benchmark_v3.0.0-xccdf.xml"
+    cis_cpe_file: "CIS_Ubuntu_Linux_22.04_LTS_Benchmark_v3.0.0-cpe-dictionary.xml"
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
@@ -15,7 +16,6 @@
         name: 
           - libopenscap8
           - tar
-          - xsltproc  # Required for HTML generation from standalone XCCDF files
         state: present
         update_cache: yes
 
@@ -57,6 +57,7 @@
     - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
       ansible.builtin.command: >
         oscap xccdf eval
+        --cpe {{ cis_cpe_file }}
         --profile {{ oscap_profile }}
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
