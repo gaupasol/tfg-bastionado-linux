@@ -1,0 +1,220 @@
+- name: "Evaluación y Remediación de Seguridad: OpenSCAP CIS Level 2 Server (Ubuntu 22.04)"
+  hosts: "all:!SLKVAWXTFGDES"  # Apunta a todas las máquinas excepto al host de AWX
+  become: yes
+  gather_facts: yes
+  vars:
+    oscap_profile: "xccdf_org.ssgproject.content_profile_cis_level2_server"
+    benchmark: "cis_level2_server"
+    github_raw_xml_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-ubuntu2204-ds.xml"
+    github_remediation_base_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/remediations/ssg_generated/static_profiles"
+    remediation_file: "ubuntu2204-playbook-{{ benchmark }}.yml"
+    awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
+
+  tasks:
+    - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
+      ansible.builtin.package:
+        name:
+          - openscap-scanner
+          - libopenscap8
+        state: present
+
+    - name: "LOG | Informar sobre la creación del directorio temporal"
+      ansible.builtin.debug:
+        msg: "Verificando y/o creando el directorio temporal para reportes en el objetivo: /tmp/openscap_reports"
+
+    - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: directory
+        mode: '0755'
+
+    - name: "LOG | Informar sobre la descarga del datastream"
+      ansible.builtin.debug:
+        msg: "Buscando y descargando el archivo XML fuente desde GitHub al nodo AWX local"
+      delegate_to: localhost
+      run_once: yes
+
+    - name: "RED | Descargar el datastream desde GitHub al nodo de control (AWX)"
+      ansible.builtin.get_url:
+        url: "{{ github_raw_xml_url }}"
+        dest: /tmp/ssg-ubuntu2204-ds.xml
+        mode: '0644'
+      delegate_to: localhost
+      run_once: yes
+      become: no
+
+    - name: "LOG | Informar sobre la transferencia de archivos"
+      ansible.builtin.debug:
+        msg: "Transfiriendo ssg-ubuntu2204-ds.xml hacia el objetivo {{ inventory_hostname }}"
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
+      ansible.builtin.copy:
+        src: /tmp/ssg-ubuntu2204-ds.xml
+        dest: /tmp/openscap_reports/ssg-ubuntu2204-ds.xml
+
+    # No se requiere parcheo del datastream: SSG reconoce Ubuntu 22.04 de forma nativa.
+
+    - name: "LOG | Informar sobre el inicio del escaneo"
+      ansible.builtin.debug:
+        msg: "Iniciando escaneo OpenSCAP con el perfil '{{ oscap_profile }}'. Esto puede tardar unos minutos..."
+
+    - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --profile {{ oscap_profile }}
+        --results /tmp/openscap_reports/results.xml
+        --report /tmp/openscap_reports/report.html
+        /tmp/openscap_reports/ssg-ubuntu2204-ds.xml
+      register: oscap_scan
+      failed_when: oscap_scan.rc not in [0, 2]
+
+    - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
+      block:
+        - name: "VARIABLES | Generar nomenclatura dinámica de archivos y carpetas"
+          ansible.builtin.set_fact:
+            os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
+            target_name: "{{ inventory_hostname }}"
+            scan_type: "escaneo-bastionado"
+            unique_id: "{{ 100000000 | random | to_uuid | split('-') | first | upper }}"
+
+        - name: "VARIABLES | Construir rutas y base de archivos (con UUID)"
+          ansible.builtin.set_fact:
+            file_base: "{{ ansible_date_time.date }}-{{ unique_id }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ ansible_date_time.date }}-{{ unique_id }}-{{ scan_type }}"
+
+        - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/results.xml
+            dest: "/tmp/{{ file_base }}.xml"
+            flat: yes
+
+        - name: "RED | Extraer reporte HTML legible desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/report.html
+            dest: "/tmp/{{ file_base }}.html"
+            flat: yes
+
+        - name: "LOG | Informar sobre la creación de la estructura de carpetas destino"
+          ansible.builtin.debug:
+            msg: "Buscando/Creando estructura de directorios en Host AWX: {{ report_dir }}/[xml, html, playbook_usado]"
+          delegate_to: SLKVAWXTFGDES
+
+        - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
+          ansible.builtin.file:
+            path: "{{ report_dir }}/{{ item }}"
+            state: directory
+            mode: '0755'
+          delegate_to: SLKVAWXTFGDES
+          become: yes
+          loop:
+            - xml
+            - html
+            - playbook_usado
+
+        - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
+          ansible.builtin.copy:
+            src: "/tmp/{{ file_base }}.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}.{{ item }}"
+          delegate_to: SLKVAWXTFGDES
+          loop:
+            - xml
+            - html
+
+    # --- EXTRACCIÓN DE PORCENTAJE DE CUMPLIMIENTO ---
+    - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
+      delegate_to: SLKVAWXTFGDES
+      register: openscap_score
+      changed_when: false
+      become: yes
+
+    # --- REMEDIACIÓN SSG ---
+    - name: "LOG | Informar sobre la descarga del playbook de remediación"
+      ansible.builtin.debug:
+        msg: "Descargando playbook de remediación desde GitHub ({{ github_remediation_base_url }}/{{ remediation_file }})"
+      delegate_to: localhost
+      run_once: yes
+
+    - name: "RED | Descargar playbook de remediación en AWX"
+      ansible.builtin.get_url:
+        url: "{{ github_remediation_base_url }}/{{ remediation_file }}"
+        dest: "/tmp/{{ remediation_file }}"
+        mode: '0644'
+      delegate_to: localhost
+      run_once: yes
+      become: no
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar playbook de remediación al objetivo"
+      ansible.builtin.copy:
+        src: "/tmp/{{ remediation_file }}"
+        dest: "/tmp/openscap_reports/{{ remediation_file }}"
+
+    # No se requiere parcheo del playbook de remediación: SSG genera el playbook
+    # para Ubuntu 22.04 de forma nativa, sin referencias a distribuciones externas.
+
+    - name: "PREPARACIÓN | Instalar ansible-core en objetivo para aplicar remediación localmente"
+      ansible.builtin.package:
+        name: ansible-core
+        state: present
+
+    - name: "PREPARACIÓN | Instalar colecciones necesarias para la remediación"
+      ansible.builtin.command: "ansible-galaxy collection install community.general ansible.posix"
+      register: galaxy_install
+      changed_when: "'was installed successfully' in galaxy_install.stdout"
+
+    - name: "EJECUCIÓN | Aplicar remediación (SSG Playbook) en el objetivo"
+      ansible.builtin.command: "ansible-playbook -c local -i 127.0.0.1, /tmp/openscap_reports/{{ remediation_file }}"
+      register: remediation_run
+      failed_when: remediation_run.rc != 0
+
+    - name: "RED | Extraer playbook de remediación (hotfix) hacia AWX"
+      ansible.builtin.fetch:
+        src: "/tmp/openscap_reports/{{ remediation_file }}"
+        dest: "/tmp/{{ file_base }}-hotfix.yml"
+        flat: yes
+
+    - name: "SISTEMA DE ARCHIVOS | Mover hotfix a carpeta playbook_usado en Host AWX"
+      ansible.builtin.copy:
+        src: "/tmp/{{ file_base }}-hotfix.yml"
+        dest: "{{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
+      delegate_to: SLKVAWXTFGDES
+      become: yes
+
+    # --- RESUMEN FINAL ---
+    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "ESCANEO Y REMEDIACIÓN COMPLETADOS PARA: {{ inventory_hostname }}"
+          - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
+          - "CUMPLIMIENTO PRE-REMEDIACIÓN: {{ openscap_score.stdout | float | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
+          - "--> Carpeta Base: {{ report_dir }}"
+          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
+          - "--> Playbook:     {{ report_dir }}/playbook_usado/{{ file_base }}-hotfix.yml"
+          - "=================================================================="
+
+    - name: "LOG | Informar sobre la limpieza del entorno"
+      ansible.builtin.debug:
+        msg: "Borrando archivos temporales en el objetivo (/tmp/openscap_reports) y en AWX (/tmp/ssg-ubuntu2204-ds.xml, hotfixes)"
+
+    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: absent
+
+    - name: "LIMPIEZA | Eliminar archivos temporales en AWX"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      run_once: yes
+      become: no
+      loop:
+        - /tmp/ssg-ubuntu2204-ds.xml
+        - "/tmp/{{ remediation_file }}"
+        - "/tmp/{{ file_base }}.xml"
+        - "/tmp/{{ file_base }}.html"
+        - "/tmp/{{ file_base }}-hotfix.yml"
