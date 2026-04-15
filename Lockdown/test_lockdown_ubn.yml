@@ -1,0 +1,7 @@
+---
+- name: Hardening Ubuntu 22.04 with CIS Benchmark
+  hosts: "all:!SLKVAWXTFGDES"
+  become: true
+  
+  roles:
+    - role: roles/UBUNTU22-CIS
