@@ -1,0 +1,43 @@
+---
+- name: Hardening Ubuntu 22.04 with CIS Benchmark
+  hosts: "all:!SLKVAWXTFGDES"
+  become: true
+  
+  vars:
+    ## -------------------------------------------------------------------------
+    ## General Safety & Testing Overrides
+    ## -------------------------------------------------------------------------
+    
+    # System will reboot if false; set to true to avoid disruptive reboots
+    skip_reboot: true
+    
+    # Set to false to avoid potentially disruptive tasks
+    ubtu22cis_disruption_high: false
+    
+    # Disable audits during the initial remediation run
+    run_audit: false
+
+    ## -------------------------------------------------------------------------
+    ## Sudo & Privilege Escalation Protection
+    ## -------------------------------------------------------------------------
+    
+    # Exclude specific users from having their NOPASSWD sudo rights removed
+    ubtu22cis_sudoers_exclude_nopasswd_list:
+      - ec2-user
+      - vagrant
+      - ansible_sshkey
+      - ansible_passwd
+      - lksistemas
+
+    # Disable Section 5.2 rules to prevent the role from modifying sudoers files or su access
+    ubtu22cis_rule_5_2_1: false # 5.2.1 Ensure sudo is installed
+    ubtu22cis_rule_5_2_2: false # 5.2.2 Ensure sudo commands use pty
+    ubtu22cis_rule_5_2_3: false # 5.2.3 Ensure sudo log file exists
+    ubtu22cis_rule_5_2_4: false # 5.2.4 Ensure users must provide password for escalation
+    ubtu22cis_rule_5_2_5: false # 5.2.5 Ensure re-authentication for privilege escalation is not disabled globally
+    ubtu22cis_rule_5_2_6: false # 5.2.6 Ensure sudo authentication timeout is configured correctly
+    ubtu22cis_rule_5_2_7: false # 5.2.7 Ensure access to the su command is restricted
+
+  roles:
+    # Relative path from tfg-bastionado-linux/ansible_templates/rck/bastionado/ to the role
+    - role: ../../../../resources/remediations/ansible_lockdown/UBUNTU22-CIS
