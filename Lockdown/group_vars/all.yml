@@ -5,6 +5,7 @@
 skip_reboot: true
 ubtu22cis_disruption_high: false
 run_audit: false
+setup_audit: false
 
 # Sudo Overrides
 ubtu22cis_sudoers_exclude_nopasswd_list:
