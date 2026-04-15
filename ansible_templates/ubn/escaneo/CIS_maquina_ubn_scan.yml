@@ -60,6 +60,7 @@
     - name: "SISTEMA DE ARCHIVOS | Aplicar parches efímeros al XCCDF (Arreglar CPE)"
       ansible.builtin.shell: |
         sed -i 's|idref="cpe:2.3:o:canonical:ubuntu_linux:22.04[^"]*"|idref="cpe:/o:canonical:ubuntu_linux:22.04"|g' {{ cis_xccdf_file }}
+        sed -i '/xccdf_org.cisecurity.benchmarks_rule_2.3.3.1_Ensure_chrony_is_configured_with_authorized_timeserver/s/selected="[^"]*"/selected="false"/g' {{ cis_xccdf_file }} #saltar regla temporalmente
       args:
         chdir: "/tmp/openscap_reports/ubn2204_scan"
         
@@ -68,7 +69,6 @@
         oscap xccdf eval
         --cpe {{ cis_cpe_file }}
         --profile {{ oscap_profile }}
-        --skip-rule xccdf_org.cisecurity.benchmarks_rule_2.3.3.1_Ensure_chrony_is_configured_with_authorized_timeserver
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
         {{ cis_xccdf_file }}
