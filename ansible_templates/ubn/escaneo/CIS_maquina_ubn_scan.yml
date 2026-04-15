@@ -59,7 +59,7 @@
 
     - name: "SISTEMA DE ARCHIVOS | Aplicar parches efímeros al XCCDF (Bypass reglas rotas y arreglar CPE)"
       ansible.builtin.shell: |
-        sed -i '/xccdf_org.cisecurity.benchmarks_rule_2.3.3.1_Ensure_chrony_is_configured_with_authorized_timeserver/ s/selected="true"/selected="false"/g' CIS_Ubuntu_Linux_22.04_LTS_Benchmark_v3.0.0-xccdf.xml
+        sed -i '/chrony_configured_authorized_timeserver/d' {{ cis_xccdf_file }}
         sed -i 's|idref="cpe:2.3:o:canonical:ubuntu_linux:22.04[^"]*"|idref="cpe:/o:canonical:ubuntu_linux:22.04"|g' {{ cis_xccdf_file }}
       args:
         chdir: "/tmp/openscap_reports/ubn2204_scan"
@@ -79,14 +79,18 @@
 
     - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
       block:
-        - name: "VARIABLES | Generar nomenclatura dinámica de archivos"
+        - name: "VARIABLES | Generar nomenclatura dinámica de OS y Target"
           ansible.builtin.set_fact:
             os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
             target_name: "{{ inventory_hostname }}"
 
-        - name: "VARIABLES | Construir base del nombre del archivo"
+        - name: "VARIABLES | Construir base del nombre de archivo con sufijo CIS-PRO"
           ansible.builtin.set_fact:
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ benchmark }}-{{ target_name }}"
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ target_name }}-CIS-PRO"
+
+        - name: "VARIABLES | Construir ruta de la carpeta de reportes"
+          ansible.builtin.set_fact:
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ file_base }}"
 
         - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
@@ -102,7 +106,7 @@
 
         - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
           ansible.builtin.file:
-            path: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}"
+            path: "{{ report_dir }}/{{ item }}"
             state: directory
             mode: '0755'
           delegate_to: SLKVAWXTFGDES
@@ -114,22 +118,32 @@
         - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
           ansible.builtin.copy:
             src: "/tmp/{{ file_base }}.{{ item }}"
-            dest: "{{ awx_report_base_dir }}/{{ target_name }}/{{ item }}/{{ file_base }}.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}.{{ item }}"
           delegate_to: SLKVAWXTFGDES
           loop:
             - xml
             - html
 
     - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
-      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ awx_report_base_dir }}/{{ target_name }}/xml/{{ file_base }}.xml"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
       delegate_to: SLKVAWXTFGDES
       register: openscap_score
       changed_when: false
       become: yes
 
-    - name: "RESUMEN | Mostrar resultados finales"
+    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
       ansible.builtin.debug:
-        msg: "ESCANEO COMPLETADO PARA: {{ inventory_hostname }} | CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
+        msg: 
+          - "=================================================================="
+          - "ESCANEO COMPLETADO PARA: {{ inventory_hostname }}"
+          - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
+          - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
+          - "--> Carpeta Base: {{ report_dir }}"
+          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
+          - "=================================================================="
 
     - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
       ansible.builtin.file:
