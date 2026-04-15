@@ -56,19 +56,19 @@
 
     - name: "SISTEMA DE ARCHIVOS | Asegurar que los scripts SCE sean ejecutables"
       ansible.builtin.command: "chmod -R +x /tmp/openscap_reports/ubn2204_scan/sce/"
-
-    - name: "SISTEMA DE ARCHIVOS | Aplicar parches efímeros al XCCDF (Bypass reglas rotas y arreglar CPE)"
+      
+    - name: "SISTEMA DE ARCHIVOS | Aplicar parches efímeros al XCCDF (Arreglar CPE)"
       ansible.builtin.shell: |
-        sed -i '/chrony_configured_authorized_timeserver/d' {{ cis_xccdf_file }}
         sed -i 's|idref="cpe:2.3:o:canonical:ubuntu_linux:22.04[^"]*"|idref="cpe:/o:canonical:ubuntu_linux:22.04"|g' {{ cis_xccdf_file }}
       args:
         chdir: "/tmp/openscap_reports/ubn2204_scan"
-
+        
     - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
       ansible.builtin.command: >
         oscap xccdf eval
         --cpe {{ cis_cpe_file }}
         --profile {{ oscap_profile }}
+        --skip-rule xccdf_org.cisecurity.benchmarks_rule_2.3.3.1_Ensure_chrony_is_configured_with_authorized_timeserver
         --results /tmp/openscap_reports/results.xml
         --report /tmp/openscap_reports/report.html
         {{ cis_xccdf_file }}
