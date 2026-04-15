@@ -1,0 +1,169 @@
+- name: "Evaluación de Seguridad: CIS PRO Level 1/2 Server (Rocky Linux 9)"
+  hosts: "all:!SLKVAWXTFGDES"
+  become: yes
+  gather_facts: yes
+  vars:
+    # This variable will be overwritten by the AWX Survey. Defaults to "1".
+    scan_level: "1"
+
+    # Dynamically inject the scan level into the profile ID and benchmark name
+    oscap_profile: "xccdf_org.cisecurity.benchmarks_profile_Level_{{ scan_level }}_-_Server"
+    benchmark: "cis_server_l{{ scan_level }}_pro"
+    
+    # Source variables on SLKVAWXTFGDES (Adjust the 'rl99' folder name if yours is different!)
+    cis_pro_source_dir: "/home/ibai/awx-poc-tfg/CIS-PRO-xml/rl9"
+    cis_xccdf_file: "CIS_Rocky_Linux_9_Benchmark_v2.0.0-xccdf.xml"
+    cis_cpe_file: "CIS_Rocky_Linux_9_Benchmark_v2.0.0-cpe-dictionary.xml"
+    
+    # Destination reporting variables
+    awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
+
+  tasks:
+    - name: "PREPARACIÓN | Instalar dependencias en el objetivo (Rocky Linux)"
+      ansible.builtin.dnf:
+        name: 
+          - openscap-scanner
+          - openscap-engine-sce
+          - tar
+        state: present
+
+    - name: "SISTEMA DE ARCHIVOS | Crear directorios de escaneo"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/openscap_reports
+        - /tmp/openscap_reports/rck9_scan
+
+    - name: "SISTEMA DE ARCHIVOS | Comprimir directorio CIS PRO en host origen"
+      ansible.builtin.command: "tar -czf /tmp/cis_rck9_pro.tgz -C {{ cis_pro_source_dir }} ."
+      delegate_to: SLKVAWXTFGDES
+      run_once: yes
+      become: yes
+
+    - name: "RED | Descargar paquete comprimido al nodo AWX"
+      ansible.builtin.fetch:
+        src: "/tmp/cis_rck9_pro.tgz"
+        dest: "/tmp/cis_rck9_pro.tgz"
+        flat: yes
+      delegate_to: SLKVAWXTFGDES
+      run_once: yes
+      become: yes
+
+    - name: "SISTEMA DE ARCHIVOS | Copiar paquete desde AWX al objetivo"
+      ansible.builtin.copy:
+        src: "/tmp/cis_rck9_pro.tgz"
+        dest: "/tmp/openscap_reports/cis_rck9_pro.tgz"
+
+    - name: "SISTEMA DE ARCHIVOS | Descomprimir paquete en objetivo"
+      ansible.builtin.unarchive:
+        src: "/tmp/openscap_reports/cis_rck9_pro.tgz"
+        dest: "/tmp/openscap_reports/rck9_scan/"
+        remote_src: yes
+
+    - name: "SISTEMA DE ARCHIVOS | Asegurar que los scripts SCE sean ejecutables"
+      ansible.builtin.command: "chmod -R +x /tmp/openscap_reports/rck9_scan/sce/"
+
+    - name: "SISTEMA DE ARCHIVOS | Aplicar parches efímeros al XCCDF (Arreglar CPE para Rocky)"
+      ansible.builtin.shell: |
+        sed -i 's|idref="cpe:2.3:o:rocky:rocky_linux:9[^"]*"|idref="cpe:/o:rocky:rocky_linux:9"|g' {{ cis_xccdf_file }}
+      args:
+        chdir: "/tmp/openscap_reports/rck9_scan"
+
+    - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --cpe {{ cis_cpe_file }}
+        --profile {{ oscap_profile }}
+        --results /tmp/openscap_reports/results.xml
+        --report /tmp/openscap_reports/report.html
+        {{ cis_xccdf_file }}
+      args:
+        chdir: "/tmp/openscap_reports/rck9_scan"
+      register: oscap_scan
+      failed_when: oscap_scan.rc not in [0, 2]
+
+    - name: "PROCESAMIENTO | Bloque de extracción y almacenamiento de reportes"
+      block:
+        - name: "VARIABLES | Generar nomenclatura dinámica de OS y Target"
+          ansible.builtin.set_fact:
+            os_ver: "{{ ansible_distribution | lower | replace(' ', '') | replace('linux', '') }}{{ ansible_distribution_version | replace('.', '') }}"
+            target_name: "{{ inventory_hostname }}"
+
+        - name: "VARIABLES | Construir base del nombre de archivo con sufijo CIS-PRO"
+          ansible.builtin.set_fact:
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ target_name }}-CIS-PRO"
+
+        - name: "VARIABLES | Construir ruta de la carpeta de reportes"
+          ansible.builtin.set_fact:
+            report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ file_base }}"
+
+        - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/results.xml
+            dest: "/tmp/{{ file_base }}.xml"
+            flat: yes
+
+        - name: "RED | Extraer reporte HTML legible desde el objetivo hacia AWX"
+          ansible.builtin.fetch:
+            src: /tmp/openscap_reports/report.html
+            dest: "/tmp/{{ file_base }}.html"
+            flat: yes
+
+        - name: "SISTEMA DE ARCHIVOS | Asegurar carpetas de destino en el Host AWX"
+          ansible.builtin.file:
+            path: "{{ report_dir }}/{{ item }}"
+            state: directory
+            mode: '0755'
+          delegate_to: SLKVAWXTFGDES
+          become: yes
+          loop:
+            - xml
+            - html
+
+        - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en el Host AWX"
+          ansible.builtin.copy:
+            src: "/tmp/{{ file_base }}.{{ item }}"
+            dest: "{{ report_dir }}/{{ item }}/{{ file_base }}.{{ item }}"
+          delegate_to: SLKVAWXTFGDES
+          loop:
+            - xml
+            - html
+
+    - name: "EXTRACCIÓN | Leer score de cumplimiento desde el XML en el Host AWX"
+      ansible.builtin.shell: "awk -F'[><]' '/<score system=\"urn:xccdf:scoring:default\"/{print $3; exit}' {{ report_dir }}/xml/{{ file_base }}.xml"
+      delegate_to: SLKVAWXTFGDES
+      register: openscap_score
+      changed_when: false
+      become: yes
+
+    - name: "RESUMEN | Mostrar resultados finales y rutas de despliegue"
+      ansible.builtin.debug:
+        msg: 
+          - "=================================================================="
+          - "ESCANEO COMPLETADO PARA: {{ inventory_hostname }}"
+          - "NORMATIVA: {{ benchmark | replace('_', ' ') | upper }}"
+          - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
+          - "------------------------------------------------------------------"
+          - "UBICACIÓN DE REPORTES EN EL HOST AWX:"
+          - "--> Carpeta Base: {{ report_dir }}"
+          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
+          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
+          - "=================================================================="
+
+    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
+      ansible.builtin.file:
+        path: /tmp/openscap_reports
+        state: absent
+
+    - name: "LIMPIEZA | Eliminar paquete temporal en AWX y origen"
+      ansible.builtin.file:
+        path: /tmp/cis_rck9_pro.tgz
+        state: absent
+      delegate_to: "{{ item.host }}"
+      run_once: yes
+      become: "{{ item.become }}"
+      loop:
+        - { host: 'localhost', become: no }
+        - { host: 'SLKVAWXTFGDES', become: yes }
