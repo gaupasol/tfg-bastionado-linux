@@ -1,23 +1,16 @@
-- name: "Evaluación de Seguridad: CIS PRO Level {{ cis_level }} Server (Ubuntu 22.04)"
+- name: "Evaluación de Seguridad: CIS PRO Level 1 Server (Ubuntu 22.04)"
   hosts: "all:!SLKVAWXTFGDES"
   become: yes
   gather_facts: yes
   vars:
-    # Set default to 1. This can be overridden by an AWX Survey or CLI extra-vars.
-    cis_level: "1" 
-    oscap_profile: "xccdf_org.cisecurity.benchmarks_profile_Level_{{ cis_level }}_-_Server"
-    benchmark: "cis_server_l{{ cis_level }}_pro"
+    oscap_profile: "xccdf_org.cisecurity.benchmarks_profile_Level_1_-_Server"
+    benchmark: "cis_server_l1_pro"
     cis_pro_source_dir: "/home/ibai/awx-poc-tfg/CIS-PRO-xml/ubn2204"
     cis_xccdf_file: "CIS_Ubuntu_Linux_22.04_LTS_Benchmark_v3.0.0-xccdf.xml"
     cis_cpe_file: "CIS_Ubuntu_Linux_22.04_LTS_Benchmark_v3.0.0-cpe-dictionary.xml"
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
   tasks:
-    - name: "VALIDACIÓN | Asegurar que el nivel introducido es correcto"
-      ansible.builtin.fail:
-        msg: "Error: El nivel CIS debe ser '1' o '2'. Valor introducido: {{ cis_level }}"
-      when: cis_level | string not in ['1', '2']
-
     - name: "PREPARACIÓN | Instalar dependencias en el objetivo"
       ansible.builtin.apt:
         name: 
@@ -93,7 +86,7 @@
 
         - name: "VARIABLES | Construir base del nombre de archivo con sufijo CIS-PRO"
           ansible.builtin.set_fact:
-            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ target_name }}-CIS-PRO-L{{ cis_level }}"
+            file_base: "{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}T{{ ansible_date_time.minute }}-{{ os_ver }}-{{ target_name }}-CIS-PRO"
 
         - name: "VARIABLES | Construir ruta de la carpeta de reportes"
           ansible.builtin.set_fact:
