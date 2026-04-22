@@ -63,9 +63,9 @@
         name: "{{ oscap_pkg }}"
         state: present
 
-    - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo"
+    - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo (/opt)"
       ansible.builtin.file:
-        path: /tmp/openscap_reports
+        path: /opt/openscap_reports
         state: directory
         mode: '0755'
 
@@ -81,11 +81,11 @@
     - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
       ansible.builtin.copy:
         src: "/tmp/{{ oscap_xml_name }}"
-        dest: "/tmp/openscap_reports/{{ oscap_xml_name }}"
+        dest: "/opt/openscap_reports/{{ oscap_xml_name }}"
 
     - name: "PARCHEO | Modificar verificación RPM y CPE (Solo Rocky Linux)"
       ansible.builtin.replace:
-        path: "/tmp/openscap_reports/{{ oscap_xml_name }}"
+        path: "/opt/openscap_reports/{{ oscap_xml_name }}"
         regexp: "{{ item.regex }}"
         replace: "{{ item.replacement }}"
       when: os_key == 'Rocky_9'
@@ -104,9 +104,9 @@
       ansible.builtin.command: >
         oscap xccdf eval
         --profile {{ oscap_profile }}
-        --results /tmp/openscap_reports/results.xml
-        --report /tmp/openscap_reports/report.html
-        /tmp/openscap_reports/{{ oscap_xml_name }}
+        --results /opt/openscap_reports/results.xml
+        --report /opt/openscap_reports/report.html
+        /opt/openscap_reports/{{ oscap_xml_name }}
       register: oscap_scan
       # OpenSCAP outputs exit code 2 when vulnerabilities are found
       failed_when: oscap_scan.rc not in [0, 2]
@@ -130,13 +130,13 @@
 
         - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
-            src: /tmp/openscap_reports/results.xml
+            src: /opt/openscap_reports/results.xml
             dest: "/tmp/{{ file_base }}.xml"
             flat: yes
 
         - name: "RED | Extraer reporte HTML legible desde el objetivo hacia AWX"
           ansible.builtin.fetch:
-            src: /tmp/openscap_reports/report.html
+            src: /opt/openscap_reports/report.html
             dest: "/tmp/{{ file_base }}.html"
             flat: yes
 
@@ -187,9 +187,9 @@
           - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
           - "=================================================================="
 
-    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo"
+    - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo (/opt)"
       ansible.builtin.file:
-        path: /tmp/openscap_reports
+        path: /opt/openscap_reports
         state: absent
 
     - name: "LIMPIEZA | Eliminar archivos temporales en AWX (localhost)"
