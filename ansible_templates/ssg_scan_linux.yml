@@ -52,7 +52,11 @@
           {%- if os_key == 'Ubuntu_22' -%}
           xccdf_org.ssgproject.content_profile_cis_level{{ cis_level }}_{{ cis_profile | lower }}
           {%- elif os_key == 'Rocky_9' -%}
-          xccdf_org.ssgproject.content_profile_cis_{{ cis_profile | lower }}_l{{ cis_level }}
+            {%- if cis_profile == 'Server' and cis_level == '2' -%}
+            xccdf_org.ssgproject.content_profile_cis
+            {%- else -%}
+            xccdf_org.ssgproject.content_profile_cis_{{ cis_profile | lower }}_l{{ cis_level }}
+            {%- endif -%}
           {%- endif -%}
 
     # ==========================================
