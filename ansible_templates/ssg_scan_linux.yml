@@ -75,7 +75,7 @@
         dest: "/tmp/{{ oscap_xml_name }}"
         mode: '0644'
       delegate_to: localhost
-      run_once: yes
+      # run_once: yes has been removed so it triggers for both Rocky and Ubuntu
       become: no
 
     - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
