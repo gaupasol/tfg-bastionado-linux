@@ -215,6 +215,12 @@
         - { regex: 'Red Hat Enterprise Linux', replacement: 'Rocky Linux' }
         - { regex: 'cmd:\s*authselect select .*\$\(authselect current --raw\).* --force', replacement: 'cmd: authselect apply-changes || authselect select sssd --force || true' }
 
+    - name: "PARCHEO | Ignorar errores de sysctl si IPv6 está deshabilitado en el kernel"
+      ansible.builtin.replace:
+        path: "/tmp/openscap_reports/{{ remediation_file }}"
+        regexp: '^( +)name:\s*net\.ipv6(.*)$'
+        replace: '\1name: net.ipv6\2\n\1ignoreerrors: yes'
+
     - name: "PREPARACIÓN | Instalar pip3 en el objetivo (Solo Ubuntu)"
       ansible.builtin.package:
         name: python3-pip
