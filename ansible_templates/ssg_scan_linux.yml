@@ -72,10 +72,10 @@
     # ==========================================
     # PHASE 2: PREPARATION & DATASTREAM FETCH
     # ==========================================
-    - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
-      ansible.builtin.package:
-        name: "{{ oscap_pkg }}"
-        state: present
+#    - name: "PREPARACIÓN | Instalar dependencias del escáner OpenSCAP en el objetivo"
+#      ansible.builtin.package:
+#        name: "{{ oscap_pkg }}"
+#        state: present
 
     - name: "SISTEMA DE ARCHIVOS | Crear directorio temporal en el objetivo (/opt)"
       ansible.builtin.file:
