@@ -1,17 +1,17 @@
 ---
 - name: "Evaluación de Seguridad: OpenSCAP CIS (Multi-OS)"
-  hosts: "all:!SLKVAWXTFGDES"
+  hosts: "{{ 'all:!SLKVAWXTFGDES' if target_hosts | default('all') == 'all' else ([target_hosts | default([])] | flatten | difference(['SLKVAWXTFGDES']) | join(',')) }}"
   become: yes
   gather_facts: yes
   vars:
-    # These variables can be overridden by AWX Surveys
+    # Estas variables pueden ser sobrescritas por las AWX Surveys
     cis_level: "1" 
     cis_profile: "Server" 
     
-    # Base directory for storage on SLKVAWXTFGDES
+    # Directorio base de almacenamiento en SLKVAWXTFGDES
     awx_report_base_dir: "/home/ibai/awx-poc-tfg/reportes"
 
-    # OS-specific mapping for datastreams and packages
+    # Mapeo de paquetes y datastreams específicos por sistema operativo
     oscap_config_map:
       "Rocky_9":
         pkg_name: "openscap-scanner"
@@ -21,6 +21,16 @@
         pkg_name: "libopenscap8"
         github_url: "https://raw.githubusercontent.com/gaupasol/tfg-bastionado-linux/main/resources/scans/openSCAP/ssg-ubuntu2204-ds.xml"
         xml_name: "ssg-ubuntu2204-ds.xml"
+
+  pre_tasks:
+    - name: "RENDIMIENTO | Iniciar monitor de recursos del sistema (vmstat) en segundo plano"
+      ansible.builtin.shell: nohup vmstat 1 >> /tmp/playbook_perf.log 2>&1 & echo $!
+      register: monitor_pid
+      changed_when: false
+
+    - name: "VARIABLES | Guardar PID del monitor de rendimiento"
+      ansible.builtin.set_fact:
+        vmstat_pid: "{{ monitor_pid.stdout }}"
 
   tasks:
     # ==========================================
@@ -73,13 +83,16 @@
         state: directory
         mode: '0755'
 
+    - name: "MARCADOR | Inicio de transferencia de archivos"
+      ansible.builtin.shell: 'echo "MARCA: Inicio de transferencia de archivos" >> /tmp/playbook_perf.log'
+      changed_when: false
+
     - name: "RED | Descargar el datastream desde GitHub al nodo de control (AWX)"
       ansible.builtin.get_url:
         url: "{{ oscap_url }}"
         dest: "/tmp/{{ oscap_xml_name }}"
         mode: '0644'
       delegate_to: localhost
-      # run_once: yes has been removed so it triggers for both Rocky and Ubuntu
       become: no
 
     - name: "SISTEMA DE ARCHIVOS | Copiar el datastream desde AWX al objetivo (Air-gapped)"
@@ -97,12 +110,20 @@
         - { regex: 'redhat-release', replacement: 'rocky-release' }
         - { regex: 'cpe:/o:redhat:enterprise_linux', replacement: 'cpe:/o:rocky:rocky' }
 
+    - name: "MARCADOR | Fin de transferencia de archivos"
+      ansible.builtin.shell: 'echo "MARCA: Fin de transferencia de archivos" >> /tmp/playbook_perf.log'
+      changed_when: false
+
     # ==========================================
     # PHASE 3: EXECUTION
     # ==========================================
     - name: "LOG | Informar sobre el inicio del escaneo"
       ansible.builtin.debug:
         msg: "Iniciando escaneo OpenSCAP con el perfil '{{ oscap_profile }}'. Esto puede tardar unos minutos..."
+
+    - name: "MARCADOR | Inicio de Escaneo"
+      ansible.builtin.shell: 'echo "MARCA: Inicio de escaneo OpenSCAP" >> /tmp/playbook_perf.log'
+      changed_when: false
 
     - name: "EJECUCIÓN | Lanzar evaluación OpenSCAP en el objetivo"
       ansible.builtin.command: >
@@ -114,6 +135,10 @@
       register: oscap_scan
       # OpenSCAP outputs exit code 2 when vulnerabilities are found
       failed_when: oscap_scan.rc not in [0, 2]
+
+    - name: "MARCADOR | Fin de Escaneo"
+      ansible.builtin.shell: 'echo "MARCA: Fin de escaneo OpenSCAP" >> /tmp/playbook_perf.log'
+      changed_when: false
 
     # ==========================================
     # PHASE 4: EXTRACTION & ROUTING
@@ -131,6 +156,10 @@
           ansible.builtin.set_fact:
             file_base: "{{ ansible_date_time.date }}-{{ unique_id }}-{{ os_ver }}-CIS-L{{ cis_level }}-{{ target_name }}"
             report_dir: "{{ awx_report_base_dir }}/{{ target_name }}/{{ ansible_date_time.date }}-{{ unique_id }}-{{ scan_type }}"
+
+        - name: "MARCADOR | Inicio de transferencia de resultados"
+          ansible.builtin.shell: 'echo "MARCA: Inicio de transferencia de resultados" >> /tmp/playbook_perf.log'
+          changed_when: false
 
         - name: "RED | Extraer reporte XML crudo desde el objetivo hacia AWX"
           ansible.builtin.fetch:
@@ -155,6 +184,7 @@
           loop:
             - xml
             - html
+            - perf
 
         - name: "SISTEMA DE ARCHIVOS | Mover y organizar reportes en SLKVAWXTFGDES"
           ansible.builtin.copy:
@@ -173,27 +203,55 @@
       register: openscap_score
       changed_when: false
 
+  post_tasks:
     # ==========================================
     # PHASE 5: SUMMARY & CLEANUP
     # ==========================================
+    - name: "RENDIMIENTO | Detener monitor de recursos del sistema"
+      ansible.builtin.shell: kill -9 {{ vmstat_pid }}
+      changed_when: false
+      ignore_errors: yes
+
+    - name: "RED | Extraer log de rendimiento (Target -> AWX)"
+      ansible.builtin.fetch:
+        src: "/tmp/playbook_perf.log"
+        dest: "/tmp/{{ file_base | default('fallback') }}-perf.log"
+        flat: yes
+      when: file_base is defined
+
+    - name: "RED | Empujar log de rendimiento (AWX -> SLKVAWXTFGDES)"
+      ansible.builtin.copy:
+        src: "/tmp/{{ file_base }}-perf.log"
+        dest: "{{ report_dir }}/perf/{{ file_base }}-perf.log"
+        owner: ibai
+        group: ibai
+      delegate_to: SLKVAWXTFGDES
+      when: report_dir is defined
+
     - name: "RESUMEN | Mostrar resultados finales"
       ansible.builtin.debug:
         msg: 
           - "=================================================================="
-          - "ESCANEO COMPLETADO PARA: {{ target_name }}"
-          - "SISTEMA: {{ os_name_print }}"
-          - "PERFIL: {{ oscap_profile }}"
-          - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) }}%"
+          - "ESCANEO COMPLETADO PARA: {{ target_name | default(inventory_hostname) }}"
+          - "SISTEMA: {{ os_name_print | default('N/A') }}"
+          - "PERFIL: {{ oscap_profile | default('N/A') }}"
+          - "CUMPLIMIENTO: {{ openscap_score.stdout | float | round(2) if openscap_score is defined else 'N/A' }}%"
           - "------------------------------------------------------------------"
           - "UBICACIÓN DE REPORTES EN SLKVAWXTFGDES:"
-          - "--> Carpeta Base: {{ report_dir }}"
-          - "--> Reporte HTML: {{ report_dir }}/html/{{ file_base }}.html"
-          - "--> Reporte XML:  {{ report_dir }}/xml/{{ file_base }}.xml"
+          - "--> Carpeta Base: {{ report_dir | default('N/A') }}"
+          - "--> Reporte HTML: {{ report_dir | default('N/A') }}/html/{{ file_base | default('N/A') }}.html"
+          - "--> Reporte XML:  {{ report_dir | default('N/A') }}/xml/{{ file_base | default('N/A') }}.xml"
+          - "--> Log de Rendimiento (vmstat): {{ report_dir | default('N/A') }}/perf/{{ file_base | default('N/A') }}-perf.log"
           - "=================================================================="
 
     - name: "LIMPIEZA | Eliminar directorio temporal en el objetivo (/opt)"
       ansible.builtin.file:
         path: /opt/openscap_reports
+        state: absent
+
+    - name: "LIMPIEZA | Eliminar log de rendimiento en el objetivo"
+      ansible.builtin.file:
+        path: "/tmp/playbook_perf.log"
         state: absent
 
     - name: "LIMPIEZA | Eliminar archivos temporales en AWX (localhost)"
@@ -207,5 +265,6 @@
       loop:
         - "/tmp/{{ oscap_config_map['Rocky_9'].xml_name }}"
         - "/tmp/{{ oscap_config_map['Ubuntu_22'].xml_name }}"
-        - "/tmp/{{ file_base }}.xml"
-        - "/tmp/{{ file_base }}.html"
+        - "/tmp/{{ file_base | default('fallback') }}.xml"
+        - "/tmp/{{ file_base | default('fallback') }}.html"
+        - "/tmp/{{ file_base | default('fallback') }}-perf.log"
